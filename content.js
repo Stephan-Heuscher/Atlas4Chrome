@@ -153,6 +153,50 @@ async function handleAction(action) {
       return await scrollPage(action.direction || 'down');
     case 'done':
       return { success: true, done: true, result: action.result };
+    
+    // Computer Use API actions
+    case 'open_web_browser':
+      try {
+        const url = action.args?.url;
+        if (url) {
+          // Navigate to the URL in current tab or new tab
+          window.location.href = url;
+          return { success: true, url: window.location.href };
+        }
+        // If no URL, just return current page
+        return { success: true, url: window.location.href };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    
+    case 'find_on_page':
+      try {
+        const query = action.args?.text || action.text || '';
+        if (!query) return { success: false, error: 'no-search-query' };
+        // Use browser find - just highlight the first occurrence
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        let node;
+        while (node = walker.nextNode()) {
+          if (node.textContent.includes(query)) {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            node.parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return { success: true, found: true };
+          }
+        }
+        return { success: true, found: false };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    
     default:
       return { success: false, error: 'unknown-action', action };
   }

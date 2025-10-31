@@ -55,54 +55,56 @@ function captureVisibleTabAsync(windowId = null, format = 'jpeg', quality = 60) 
   });
 }
 
-// OPTIMIZATION: Capture screenshot ONCE, then compress/resize internally using Canvas
-// This avoids repeated captureVisibleTab calls that hit the quota limit.
-// Try different JPEG qualities and sizes on the captured image until it fits maxBytes.
+// OPTIMIZATION: Capture screenshot ONCE, use Chrome's native compression
+// If PNG is too large, try JPEG with different qualities (via Chrome API)
 async function captureThumbnail(windowId = null, maxBytes = 15000) {
   try {
-    // Step 1: Capture the tab ONCE as PNG (highest fidelity for internal processing)
-    let screenshot = null;
+    // Step 1: Try JPEG with different qualities (Chrome can compress natively)
+    // Start with quality 50 to get smaller size, then try lower if needed
+    const qualities = [50, 35, 20, 10];
+    for (const quality of qualities) {
+      try {
+        const dataUrl = await captureVisibleTabAsync(windowId, 'jpeg', quality);
+        if (!dataUrl) continue;
+        const base64 = dataUrl.split(',')[1] || '';
+        if (base64.length <= maxBytes) {
+          console.log('Captured JPEG at quality', quality, '- size:', base64.length, 'bytes');
+          return dataUrl;
+        }
+        console.log('JPEG quality', quality, 'too large:', base64.length, 'bytes, trying lower quality');
+      } catch (err) {
+        console.warn('JPEG capture at quality', quality, 'failed:', err && err.message ? err.message : err);
+        if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) {
+          const e = new Error('CAPTURE_QUOTA');
+          e.code = 'CAPTURE_QUOTA';
+          throw e;
+        }
+      }
+    }
+
+    // Step 2: If JPEG qualities don't work, try PNG
     try {
-      screenshot = await captureVisibleTabAsync(windowId, 'png');
+      const png = await captureVisibleTabAsync(windowId, 'png');
+      if (png) {
+        const base64 = png.split(',')[1] || '';
+        console.log('Captured PNG - size:', base64.length, 'bytes');
+        if (base64.length <= maxBytes * 2) {
+          // Even if over limit, PNG may be acceptable for first screenshot
+          return png;
+        }
+      }
     } catch (err) {
-      console.warn('Initial PNG capture failed', err && err.message ? err.message : err);
+      console.warn('PNG capture failed:', err && err.message ? err.message : err);
       if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) {
         const e = new Error('CAPTURE_QUOTA');
         e.code = 'CAPTURE_QUOTA';
         throw e;
       }
-      return null;
     }
 
-    if (!screenshot) return null;
-
-    // Step 2: Try different JPEG qualities on the SAME captured image (no additional captures)
-    const qualities = [60, 40, 25, 10];
-    for (const quality of qualities) {
-      try {
-        const compressed = await compressImageToDataUrl(screenshot, quality, maxBytes);
-        if (compressed) {
-          console.log('Compressed to quality', quality, '- size:', compressed.split(',')[1].length, 'bytes');
-          return compressed;
-        }
-      } catch (err) {
-        console.warn('Failed to compress at quality', quality, err && err.message ? err.message : err);
-      }
-    }
-
-    // Step 3: If no quality works, try resizing the image smaller
-    try {
-      const resized = await resizeImageToDataUrl(screenshot, 0.75, maxBytes); // 75% of original size
-      if (resized) {
-        console.log('Resized image - size:', resized.split(',')[1].length, 'bytes');
-        return resized;
-      }
-    } catch (err) {
-      console.warn('Failed to resize image', err && err.message ? err.message : err);
-    }
-
-    // Step 4: Return original if all else fails
-    return screenshot;
+    // If we got here and nothing worked, return null
+    console.warn('Unable to capture screenshot within size limit');
+    return null;
   } catch (err) {
     if (err && err.code === 'CAPTURE_QUOTA') {
       throw err; // Re-throw quota errors so caller can backoff
@@ -116,17 +118,17 @@ async function captureThumbnail(windowId = null, maxBytes = 15000) {
 // Returns data URL if compressed size fits maxBytes, otherwise null
 async function compressImageToDataUrl(dataUrl, quality, maxBytes) {
   try {
-    // In service worker, we can't use Image DOM element
-    // Instead, fetch the blob and use OffscreenCanvas if available
-    // For now, just check the base64 size - if it's too large, skip
+    // In service worker, we can't use Canvas directly
+    // However, we can offload to a content script via chrome.tabs.sendMessage
+    // For now, just check base64 size - if already under limit, return it
     const base64 = dataUrl.split(',')[1] || '';
     if (base64.length <= maxBytes) {
       return dataUrl;
     }
-    // If we can't compress efficiently, return null so caller tries other methods
+    // Can't compress in service worker context
     return null;
   } catch (err) {
-    console.warn('Canvas compression error:', err);
+    console.warn('Compression check error:', err);
     return null;
   }
 }
@@ -135,11 +137,11 @@ async function compressImageToDataUrl(dataUrl, quality, maxBytes) {
 // Scales down by scale factor (e.g., 0.75 = 75% of original)
 async function resizeImageToDataUrl(dataUrl, scaleFactor, maxBytes) {
   try {
-    // For service worker, just return null - we can't resize without DOM
-    // The caller will handle this fallback
+    // Can't resize in service worker without DOM/Canvas
+    // For now, return null to let caller try other methods
     return null;
   } catch (err) {
-    console.warn('Canvas resize error:', err);
+    console.warn('Resize check error:', err);
     return null;
   }
 }
