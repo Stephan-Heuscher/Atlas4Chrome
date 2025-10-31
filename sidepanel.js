@@ -45,4 +45,31 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.textContent = 'Last result: ' + items.lastAgentResult;
     }
   });
+
+  // Debug area: show last raw model response if present
+  const debugEl = document.getElementById('debug');
+  const copyBtn = document.getElementById('copyDebug');
+  chrome.storage.local.get('lastModelResponse', (items) => {
+    if (items && items.lastModelResponse) {
+      try { debugEl.value = JSON.stringify(items.lastModelResponse, null, 2); } catch (e) { debugEl.value = String(items.lastModelResponse); }
+    }
+  });
+
+  // Listen for runtime messages from background with live model responses
+  chrome.runtime.onMessage.addListener((msg, sender, resp) => {
+    if (!msg || msg.type !== 'MODEL_RAW') return;
+    try { debugEl.value = JSON.stringify(msg.payload, null, 2); } catch (e) { debugEl.value = String(msg.payload); }
+  });
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(debugEl.value);
+        statusEl.textContent = 'Debug copied to clipboard.';
+        setTimeout(() => statusEl.textContent = '', 1500);
+      } catch (e) {
+        statusEl.textContent = 'Copy failed: ' + e.message;
+      }
+    });
+  }
 });

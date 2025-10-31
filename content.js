@@ -16,6 +16,65 @@ async function clickElement(selector) {
   }
 }
 
+// Click at normalized coordinates (0-1000) or absolute pixels if provided
+async function clickAt(xNorm, yNorm) {
+  try {
+    const x = Math.round((xNorm / 1000) * window.innerWidth);
+    const y = Math.round((yNorm / 1000) * window.innerHeight);
+    const el = document.elementFromPoint(x, y);
+    if (el) {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+      el.click();
+      return { success: true };
+    }
+    // If no element, perform a page click
+    window.scrollTo({ top: Math.max(0, y - window.innerHeight / 2), behavior: 'smooth' });
+    document.elementFromPoint(x, y)?.click();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// Type text at normalized coordinates: click the point then type
+async function typeTextAt(xNorm, yNorm, text, press_enter = true) {
+  try {
+    const x = Math.round((xNorm / 1000) * window.innerWidth);
+    const y = Math.round((yNorm / 1000) * window.innerHeight);
+    const el = document.elementFromPoint(x, y);
+    if (el) {
+      el.focus();
+      if ('value' in el) {
+        el.value = text;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        if (press_enter) {
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+        }
+        return { success: true };
+      }
+      if (el.isContentEditable) {
+        el.innerText = text;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return { success: true };
+      }
+    }
+    // fallback: type into activeElement
+    const ae = document.activeElement;
+    if (ae && 'value' in ae) {
+      ae.value = text;
+      ae.dispatchEvent(new Event('input', { bubbles: true }));
+      if (press_enter) ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return { success: true };
+    }
+    return { success: false, error: 'no-editable-element-at-coordinates' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function typeText(selector, text) {
   try {
     const el = document.querySelector(selector);
@@ -64,9 +123,32 @@ async function handleAction(action) {
   switch (action.action) {
     case 'click':
       return await clickElement(action.selector);
+    case 'click_at':
+      return await clickAt(action.args?.x || action.x || 0, action.args?.y || action.y || 0);
+    case 'type_text_at':
+    case 'type_at':
+      return await typeTextAt(action.args?.x || action.x || 0, action.args?.y || action.y || 0, action.args?.text || action.text || '', action.args?.press_enter !== false);
     case 'type':
     case 'typeText':
       return await typeText(action.selector, action.text || action.value || '');
+    case 'hover_at':
+      try {
+        const x = Math.round(((action.args?.x || action.x || 0) / 1000) * window.innerWidth);
+        const y = Math.round(((action.args?.y || action.y || 0) / 1000) * window.innerHeight);
+        const el = document.elementFromPoint(x, y);
+        if (el) el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+        return { success: true };
+      } catch (err) { return { success: false, error: err.message }; }
+    case 'scroll_at':
+      try {
+        const x = Math.round(((action.args?.x || action.x || 0) / 1000) * window.innerWidth);
+        const y = Math.round(((action.args?.y || action.y || 0) / 1000) * window.innerHeight);
+        const direction = (action.args?.direction || action.direction || 'down');
+        const el = document.elementFromPoint(x, y) || document.scrollingElement || document.body;
+        if (direction === 'down') el.scrollBy({ top: 400, behavior: 'smooth' });
+        else if (direction === 'up') el.scrollBy({ top: -400, behavior: 'smooth' });
+        return { success: true };
+      } catch (err) { return { success: false, error: err.message }; }
     case 'scroll':
       return await scrollPage(action.direction || 'down');
     case 'done':

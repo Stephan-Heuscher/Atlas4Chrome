@@ -6,14 +6,46 @@
 
 console.log('Atlas4Chrome service worker loaded.');
 
+// Promisified chrome.storage helpers
+function storageGet(key) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(key, (res) => resolve(res && res[key]));
+  });
+}
+
+function storageSet(obj) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(obj, () => resolve());
+  });
+}
+
+function storageSyncGet(key) {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(key, (res) => resolve(res && res[key]));
+  });
+}
+
+// Helper: broadcast raw model response to any UI and persist to storage for debugging
+function broadcastModelRaw(obj) {
+  try {
+    chrome.storage.local.set({ lastModelResponse: obj });
+  } catch (e) {
+    console.warn('Failed to write lastModelResponse to storage', e);
+  }
+  try {
+    chrome.runtime.sendMessage({ type: 'MODEL_RAW', payload: obj });
+  } catch (e) {
+    // ignore
+  }
+}
+
 // Utility: promisified captureVisibleTab
-function captureVisibleTabAsync(windowId = null) {
+function captureVisibleTabAsync(windowId = null, format = 'jpeg', quality = 60) {
   return new Promise((resolve, reject) => {
     try {
-      // If windowId is null, the API will use the currently focused window. In a
-      // service worker context the focused window might be undefined, so prefer
-      // explicitly passing the active tab's windowId when available.
-      chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
+      const opts = { format };
+      if (format === 'jpeg' && typeof quality === 'number') opts.quality = quality;
+      chrome.tabs.captureVisibleTab(windowId, opts, (dataUrl) => {
         if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
         resolve(dataUrl);
       });
@@ -21,6 +53,40 @@ function captureVisibleTabAsync(windowId = null) {
       reject(err);
     }
   });
+}
+
+// Try to capture a small thumbnail by lowering JPEG quality until the base64
+// payload is below maxBytes or until qualities are exhausted.
+async function captureThumbnail(windowId = null, maxBytes = 15000) {
+  const qualities = [60, 40, 25, 10];
+  let sawQuotaError = false;
+  for (const q of qualities) {
+    try {
+      const dataUrl = await captureVisibleTabAsync(windowId, 'jpeg', q);
+      if (!dataUrl) continue;
+      const base64 = dataUrl.split(',')[1] || '';
+      if (base64.length <= maxBytes) return dataUrl;
+      // otherwise continue to next lower quality
+    } catch (err) {
+      console.warn('captureVisibleTab failed at quality', q, err && err.message ? err.message : err);
+      if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) sawQuotaError = true;
+    }
+  }
+  // As a last resort attempt a PNG capture (may be larger) and return it.
+  try {
+    const png = await captureVisibleTabAsync(windowId, 'png');
+    return png;
+  } catch (err) {
+    console.warn('Final PNG capture failed', err && err.message ? err.message : err);
+    if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) sawQuotaError = true;
+    // If we saw a quota error, surface that to caller so they can backoff more aggressively
+    if (sawQuotaError) {
+      const e = new Error('CAPTURE_QUOTA');
+      e.code = 'CAPTURE_QUOTA';
+      throw e;
+    }
+    return null;
+  }
 }
 
 // Utility: promisified sendMessage to tab
@@ -40,102 +106,132 @@ function sendMessageToTab(tabId, message) {
 // Send screenshot+goal directly to the Gemini 2.5 Computer Use Model API using
 // the Computer Use tool (generateMessage endpoint). The API Key is retrieved
 // from chrome.storage.sync, set via the options page.
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-computer-use-preview-10-2025:generateMessage';
+// Use the v1beta2 generateContent endpoint which supports the Computer Use payload shape
+const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-computer-use-preview-10-2025:generateContent';
 
 async function sendToGemini(screenshotDataUrl, goal, step) {
-  const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+  const geminiApiKey = await storageSyncGet('geminiApiKey');
   if (!geminiApiKey) {
     console.error('Gemini API key not found. Please set it in the extension options.');
     return { action: 'done', result: 'API key is missing.' };
   }
 
   try {
-    // Build a user message describing the goal and include a short context.
-    const userText = `Agent goal: ${goal}\nStep: ${step || 0}\nReturn a single JSON object describing the next action: {\n  \"action\": \"click|type|scroll|done\",\n  \"selector\": \"...\",\n  \"text\": \"...\"\n}`;
+    // Build the user prompt describing the goal.
+    const userText = `Goal: ${goal}\n\nRespond with ONLY the Computer Use tool function calls. Do not add any other text.`;
 
-    // Prepare a Computer Use tool definition. The tool tells the model how it
-    // may use the environment (the browser) and that we expect a JSON action.
+    const screenshotBase64 = screenshotDataUrl ? screenshotDataUrl.split(',')[1] : null;
+
+    // Build the official Computer Use request per Google docs:
+    // https://ai.google.dev/gemini-api/docs/computer-use#send-request
+    // The model works with normalized 0-1000 coordinates regardless of input image dimensions.
+    // Recommended screen size: 1440x900.
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          { text: userText },
+          // attach screenshot as inline_data part if available
+          ...(screenshotBase64 ? [{ inline_data: { mime_type: 'image/png', data: screenshotBase64 } }] : [])
+        ]
+      }
+    ];
+
+    // Computer Use tool declaration
     const tools = [
       {
-        name: 'computer_use',
-        description: 'Tool for interacting with the browser DOM. When invoked, return a single JSON object describing the next DOM action to take (click/type/scroll/done). Do not include any extra text outside the JSON object.',
-        // The exact `parameters`/`args` schema is optional here; the model will
-        // typically return a tool invocation with arguments that we parse below.
+        computer_use: {
+          environment: 'ENVIRONMENT_BROWSER'
+        }
       }
     ];
 
     const requestBody = {
-      messages: [
-        { role: 'system', content: { type: 'text', text: 'You are a precise browser automation assistant. Use the Computer Use tool to return a single JSON action.' } },
-        { role: 'user', content: { type: 'text', text: userText } }
-      ],
-      tools,
-      // Attach the screenshot as inline data in the input so the model can inspect it.
-      // Some Gemini Computer Use integrations accept inline_data alongside messages.
-      // Include it in an attachments-like field if supported by the API.
-      // We include a small helper field 'context' to carry the screenshot base64.
-      context: {
-        screenshot: screenshotDataUrl ? screenshotDataUrl.split(',')[1] : null
-      },
-      temperature: 0.0,
-      maxOutputTokens: 512
+      contents,
+      tools
     };
 
-    const response = await fetch(`${GEMINI_ENDPOINT}?key=${geminiApiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    let successResponse = null;
+    try {
+      // Broadcast the payload for debugging
+      try { broadcastModelRaw({ payload: requestBody }); } catch (e) {}
 
-    if (!response.ok) {
-      let errorBodyText = await response.text();
-      try { const j = JSON.parse(errorBodyText); if (j && j.error && j.error.message) errorBodyText = j.error.message; } catch (e) {}
-      console.error('Gemini API request failed:', response.status, errorBodyText);
-      if (response.status === 400 && /Computer Use/i.test(errorBodyText)) {
-        const guidance = `Model requires Computer Use tool. See https://ai.google.dev/gemini-api/docs/computer-use for instructions.`;
-        console.warn(guidance);
-        return { action: 'done', result: guidance + ' Raw error: ' + errorBodyText };
+      const response = await fetch(`${GEMINI_ENDPOINT}?key=${geminiApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        let errorBodyText = await response.text();
+        try { const j = JSON.parse(errorBodyText); if (j && j.error && j.error.message) errorBodyText = j.error.message; } catch (e) {}
+        console.error('Gemini API request failed:', response.status, errorBodyText);
+        try { broadcastModelRaw({ error: errorBodyText, status: response.status }); } catch (e) {}
+        throw new Error(`API request failed with status ${response.status}: ${errorBodyText}`);
       }
-      throw new Error(`API request failed with status ${response.status}: ${errorBodyText}`);
+
+      successResponse = response;
+    } catch (err) {
+      console.error('Network or fetch error:', err && err.message ? err.message : err);
+      throw err;
     }
 
-    const result = await response.json();
+    if (!successResponse) {
+      const err = 'Failed to get response from Gemini API';
+      console.error(err);
+      try { broadcastModelRaw({ error: err }); } catch (e) {}
+      throw new Error(err);
+    }
 
-    // Possible response shapes:
-    // 1) A tool invocation: result.candidates[0].message.toolInvocation.arguments
-    // 2) A textual response that contains JSON
-    // Try to extract a tool invocation first
+    // At this point, successResponse.ok === true, so we can safely parse JSON
+    const result = await successResponse.json();
+    // Save and broadcast raw response for debugging UIs (side panel / popup)
+    try { broadcastModelRaw({ response: result }); } catch (e) { /* ignore */ }
+
+    // Extract function calls from the v1beta generateContent response.
+    // Response shape: result.candidates[0].content.parts[], where parts can have .function_call
     try {
       const candidate = result?.candidates && result.candidates[0];
-      const toolInvocation = candidate?.message?.toolInvocation || candidate?.toolInvocation;
-      if (toolInvocation) {
-        // arguments may be an object or a JSON string
-        const args = toolInvocation.arguments;
-        let argsObj = args;
+      const parts = candidate?.content?.parts || [];
+      // Collect function_call parts
+      const functionCalls = parts.filter((p) => p.function_call).map((p) => p.function_call);
+      if (functionCalls.length > 0) {
+        // Support multiple actions: return the first for now (agent loop will continue)
+        const fc = functionCalls[0];
+        // fc has { name: string, args: object }
+        let args = fc.args || {};
+        
+        // Check for safety_decision in args
+        if (args.safety_decision) {
+          console.warn('Safety decision detected:', args.safety_decision);
+          if (args.safety_decision.decision === 'require_confirmation') {
+            // TODO: Implement user confirmation UI in the side panel
+            // For now, log a warning and treat as unsafe
+            console.warn('Action requires user confirmation. Model suggests:', args.safety_decision.explanation);
+            return { action: 'done', result: `Safety confirmation required: ${args.safety_decision.explanation}` };
+          }
+        }
+        
+        // If args is a string, try to parse
         if (typeof args === 'string') {
-          try { argsObj = JSON.parse(args); } catch (e) { argsObj = { raw: args }; }
+          try { args = JSON.parse(args); } catch (e) { /* keep as string */ }
         }
-        // Expect argsObj to contain a field with the action JSON or the action itself
-        if (argsObj && (argsObj.action || argsObj.actions || argsObj.raw)) {
-          // Normalize and return the action object
-          const actionObj = argsObj.action ? argsObj : (argsObj.actions ? argsObj.actions[0] : argsObj);
-          return actionObj;
-        }
+        // Return normalized action object containing the function call
+        return { action: fc.name, args };
       }
     } catch (e) {
-      console.warn('Failed to parse toolInvocation from Gemini response', e);
+      console.warn('Failed to parse function_call from Gemini generateContent response', e);
     }
 
-    // Fallback: look for JSON text in the candidate message content
+    // Fallback: look for textual JSON in candidate parts
     try {
-      const text = result?.candidates?.[0]?.message?.content?.[0]?.text || result?.candidates?.[0]?.content?.parts?.[0]?.text || JSON.stringify(result);
-      const jsonMatch = String(text).match(/\{[\s\S]*\}/);
+      const textParts = (result?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('\n');
+      const jsonMatch = String(textParts).match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const actionObj = JSON.parse(jsonMatch[0]);
         return actionObj;
       }
-      // If no JSON found, return done with raw text so user can inspect
-      return { action: 'done', result: 'No JSON action found in model response', raw: text };
+      return { action: 'done', result: 'No function_call or JSON action found in model response', raw: result };
     } catch (e) {
       console.error('Error extracting JSON from Gemini response', e);
       return { action: 'done', result: `Failed to parse model output: ${e.message}` };
@@ -143,7 +239,9 @@ async function sendToGemini(screenshotDataUrl, goal, step) {
 
   } catch (err) {
     console.error('Error calling Gemini or parsing response:', err);
-    return { action: 'done', result: `An error occurred: ${err.message}` };
+    const payload = { action: 'done', result: `An error occurred: ${err.message}` };
+    try { broadcastModelRaw({ error: err.message }); } catch (e) {}
+    return payload;
   }
 }
 
@@ -152,6 +250,11 @@ async function runAgentCycle(goal, options = {}) {
   console.log('Agent starting with goal:', goal);
   const maxSteps = options.maxSteps || 10;
   let step = 0;
+
+  // Mark agent as running so STOP_AGENT can interrupt
+  await storageSet({ agentShouldRun: true });
+
+  const MIN_CAPTURE_INTERVAL_MS = 1200; // keep captures >1.2s apart to avoid quota
 
   while (step < maxSteps) {
     step += 1;
@@ -167,9 +270,52 @@ async function runAgentCycle(goal, options = {}) {
     }
 
     try {
-      screenshot = await captureVisibleTabAsync(activeTab.windowId);
+      // Respect a minimum interval between captures (persisted across SW restarts)
+      const lastCaptureAt = await storageGet('lastCaptureAt') || 0;
+      const now = Date.now();
+      const since = now - lastCaptureAt;
+      if (since < MIN_CAPTURE_INTERVAL_MS) {
+        const waitMs = MIN_CAPTURE_INTERVAL_MS - since;
+        console.log('Waiting', waitMs, 'ms to respect capture interval');
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+
+      // Capture a thumbnail sized JPEG to avoid large payloads.
+      try {
+        screenshot = await captureThumbnail(activeTab.windowId, 15000);
+      } catch (err) {
+        if (err && err.code === 'CAPTURE_QUOTA') {
+          // The browser reported we hit capture quota. Back off a bit longer and skip the image for this step.
+          console.warn('Capture quota hit, backing off for 2s and skipping screenshot this step.');
+          await new Promise((r) => setTimeout(r, 2000));
+          // Update last capture time to prevent immediate retries
+          await storageSet({ lastCaptureAt: Date.now() });
+          screenshot = null;
+        } else {
+          throw err;
+        }
+      }
+
+      if (screenshot) {
+        // record when we last captured successfully
+        await storageSet({ lastCaptureAt: Date.now() });
+      }
+      if (screenshot) {
+        const base64 = screenshot.split(',')[1] || '';
+        if (base64.length > 20000) {
+          console.warn('Captured screenshot is still too large (', base64.length, 'bytes), omitting image from request.');
+          screenshot = null;
+        }
+      }
     } catch (err) {
       console.warn('Failed to capture tab screenshot:', err);
+    }
+
+    // Check if user requested stop
+    const shouldRun = await storageGet('agentShouldRun');
+    if (!shouldRun) {
+      console.log('Agent stop requested. Exiting cycle.');
+      break;
     }
 
     // 2) Send screenshot + goal to Gemini (placeholder)
@@ -230,12 +376,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'START_AGENT') {
     const goal = message.goal || '';
     // Run the agent (don't block the message) — keep worker alive as needed using alarms if required.
-    runAgentCycle(goal).then((res) => {
-      console.log('runAgentCycle result:', res);
-    }).catch((err) => console.error('Agent error:', err));
+    // Mark run flag and start
+    storageSet({ agentShouldRun: true }).then(() => {
+      runAgentCycle(goal).then((res) => {
+        console.log('runAgentCycle result:', res);
+      }).catch((err) => console.error('Agent error:', err));
+    });
 
     sendResponse({ started: true });
-    // Return true when sending response asynchronously — not necessary here but safe
-    return false;
+    // Return true when sending response asynchronously — indicate we'll send an async response
+    return true;
+  }
+
+  if (message.type === 'STOP_AGENT') {
+    // Cooperative stop: set flag so runAgentCycle will exit between steps
+    storageSet({ agentShouldRun: false }).then(() => {
+      console.log('STOP_AGENT received; agentShouldRun set to false');
+    });
+    sendResponse({ stopped: true });
+    return true;
   }
 });
