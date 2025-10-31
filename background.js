@@ -463,6 +463,8 @@ class Agent {
     Logger.info(`Starting: "${this.goal}"`);
     await StorageAPI.local.set({ [STORAGE.LOCAL.AGENT_SHOULD_RUN]: true });
 
+    let activeTab = null;
+
     while (this.step < this.maxSteps) {
       this.step++;
       Logger.info(`Step ${this.step}`);
@@ -472,12 +474,26 @@ class Agent {
         await new Promise(r => setTimeout(r, CONFIG.STEP_DELAY_MS));
       }
 
-      // Get active tab
-      const tab = await TabAPI.getNormalTab();
-      if (!tab?.id) {
-        Logger.warn('No active tab found');
-        break;
+      // Get active tab on step 1, or use stored tab for subsequent steps
+      if (this.step === 1) {
+        activeTab = await TabAPI.getNormalTab();
+        if (!activeTab?.id) {
+          Logger.warn('No active tab found');
+          break;
+        }
+      } else {
+        // Verify stored tab still exists
+        const tabs = await new Promise((resolve) => 
+          chrome.tabs.query({ windowId: activeTab.windowId }, resolve)
+        );
+        activeTab = tabs.find(t => t.id === activeTab.id);
+        if (!activeTab?.id) {
+          Logger.warn('Active tab was closed');
+          break;
+        }
       }
+      
+      const tab = activeTab;
 
       // Check if should stop
       if (!await this.shouldContinue()) {
