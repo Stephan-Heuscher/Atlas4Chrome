@@ -16,11 +16,15 @@ async function clickElement(selector) {
   }
 }
 
-// Click at normalized coordinates (0-1000) or absolute pixels if provided
-async function clickAt(xNorm, yNorm) {
+// Click at pixel coordinates (from Gemini Computer Use API)
+// Coordinates are raw pixel values from the screenshot
+async function clickAt(xPx, yPx) {
   try {
-    const x = Math.round((xNorm / 1000) * window.innerWidth);
-    const y = Math.round((yNorm / 1000) * window.innerHeight);
+    // Convert to client coordinates (accounting for scroll offset)
+    const x = Math.round(xPx);
+    const y = Math.round(yPx);
+    
+    // Get element at viewport coordinates
     const el = document.elementFromPoint(x, y);
     if (el) {
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
@@ -28,20 +32,27 @@ async function clickAt(xNorm, yNorm) {
       el.click();
       return { success: true };
     }
-    // If no element, perform a page click
-    window.scrollTo({ top: Math.max(0, y - window.innerHeight / 2), behavior: 'smooth' });
-    document.elementFromPoint(x, y)?.click();
+    
+    // If no element, try to click at the coordinates anyway (might be on a non-element area)
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y
+    });
+    document.elementFromPoint(x, y)?.dispatchEvent(clickEvent);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
-// Type text at normalized coordinates: click the point then type
-async function typeTextAt(xNorm, yNorm, text, press_enter = true) {
+// Type text at pixel coordinates (from Gemini Computer Use API)
+async function typeTextAt(xPx, yPx, text, press_enter = true) {
   try {
-    const x = Math.round((xNorm / 1000) * window.innerWidth);
-    const y = Math.round((yNorm / 1000) * window.innerHeight);
+    const x = Math.round(xPx);
+    const y = Math.round(yPx);
     const el = document.elementFromPoint(x, y);
     if (el) {
       el.focus();
@@ -133,16 +144,16 @@ async function handleAction(action) {
       return await typeText(action.selector, action.text || action.value || '');
     case 'hover_at':
       try {
-        const x = Math.round(((action.args?.x || action.x || 0) / 1000) * window.innerWidth);
-        const y = Math.round(((action.args?.y || action.y || 0) / 1000) * window.innerHeight);
+        const x = Math.round(action.args?.x || action.x || 0);
+        const y = Math.round(action.args?.y || action.y || 0);
         const el = document.elementFromPoint(x, y);
         if (el) el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
         return { success: true };
       } catch (err) { return { success: false, error: err.message }; }
     case 'scroll_at':
       try {
-        const x = Math.round(((action.args?.x || action.x || 0) / 1000) * window.innerWidth);
-        const y = Math.round(((action.args?.y || action.y || 0) / 1000) * window.innerHeight);
+        const x = Math.round(action.args?.x || action.x || 0);
+        const y = Math.round(action.args?.y || action.y || 0);
         const direction = (action.args?.direction || action.direction || 'down');
         const el = document.elementFromPoint(x, y) || document.scrollingElement || document.body;
         if (direction === 'down') el.scrollBy({ top: 400, behavior: 'smooth' });
