@@ -37,14 +37,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     const activeTabId = tabs[0].id;
-    statusEl.textContent = 'Starting agent...';
+    const activeTabUrl = tabs[0].url;
+    console.log(`Starting agent on tab ${activeTabId}: ${activeTabUrl}`);
+    statusEl.textContent = `Starting agent on tab ${activeTabId}...`;
     
     chrome.runtime.sendMessage({ type: 'START_AGENT', goal, tabId: activeTabId }, (resp) => {
       if (chrome.runtime.lastError) {
         statusEl.textContent = 'Error: ' + chrome.runtime.lastError.message;
         return;
       }
-      statusEl.textContent = resp && resp.started ? 'Agent started.' : 'Failed to start agent.';
+      statusEl.textContent = resp && resp.started ? `Agent started on tab ${activeTabId}.` : 'Failed to start agent.';
     });
   });
 

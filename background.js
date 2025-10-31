@@ -661,6 +661,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const goal = message.goal || 'Unknown goal';
     const startTabId = message.tabId; // Optional: specific tab to work on
     
+    Logger.info(`START_AGENT: goal="${goal}", tabId=${startTabId}`);
+    
     const agent = new Agent(goal, { startTabId });
     agent.run()
       .then(result => Logger.info(`Agent completed:`, result))
