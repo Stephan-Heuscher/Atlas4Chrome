@@ -116,11 +116,14 @@ const TabAPI = {
    */
   sendMessage: async (tabId, message) => {
     return new Promise((resolve) => {
+      Logger.debug(`Sending message to tab ${tabId}:`, message);
       chrome.tabs.sendMessage(tabId, message, (resp) => {
         if (chrome.runtime.lastError) {
+          Logger.warn(`Message send error (tab ${tabId}): ${chrome.runtime.lastError.message}`);
           resolve({ success: false, error: chrome.runtime.lastError.message });
           return;
         }
+        Logger.debug(`Message response from tab ${tabId}:`, resp);
         resolve(resp || { success: false, error: 'No response' });
       });
     });
