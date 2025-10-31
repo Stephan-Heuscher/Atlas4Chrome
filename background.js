@@ -350,17 +350,22 @@ class GeminiClient {
 
 const ActionExecutor = {
   async execute(tab, action) {
-    // Inject content script
-    await TabAPI.injectContentScript(tab.id);
+    try {
+      // Inject content script
+      await TabAPI.injectContentScript(tab.id);
 
-    // Send action to content script
-    const response = await TabAPI.sendMessage(tab.id, {
-      type: 'EXEC_ACTION',
-      action
-    });
+      // Send action to content script
+      const response = await TabAPI.sendMessage(tab.id, {
+        type: 'EXEC_ACTION',
+        action
+      });
 
-    Logger.debug(`Action ${action.action} response:`, response);
-    return response;
+      Logger.debug(`Action ${action.action} response:`, response);
+      return response;
+    } catch (err) {
+      Logger.error(`Action execution failed: ${err.message}`);
+      return { success: false, error: err.message };
+    }
   },
 
   async buildFunctionResponse(action, result, currentUrl) {
@@ -494,8 +499,11 @@ class Agent {
       // Execute action
       const result = await ActionExecutor.execute(tab, geminiAction);
       
-      // Get current URL for response
-      const currentTab = await TabAPI.getNormalTab();
+      // Re-query current tab by ID (tab reference may be stale)
+      const currentTabQuery = await new Promise((resolve) => 
+        chrome.tabs.query({ windowId: tab.windowId }, resolve)
+      );
+      const currentTab = currentTabQuery?.find(t => !t.url?.startsWith('chrome-extension://'));
       const currentUrl = currentTab?.url || tab.url;
 
       // Add function response
