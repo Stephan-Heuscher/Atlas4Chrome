@@ -369,10 +369,8 @@ const ActionExecutor = {
       // Normalize action names from Gemini
       const normalizedAction = this.normalizeAction(action);
       
-      // Inject content script
-      await TabAPI.injectContentScript(tab.id);
-
-      // Send action to content script
+      // Don't try to inject - content script is already loaded via manifest
+      // Just send message directly to the tab
       const response = await TabAPI.sendMessage(tab.id, {
         type: 'EXEC_ACTION',
         action: normalizedAction
