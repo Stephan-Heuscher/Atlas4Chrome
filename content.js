@@ -1,7 +1,9 @@
 // Content script - The Hands
 // Listens for EXEC_ACTION messages from the background service worker and performs actions
 
-console.log('Atlas4Chrome content script injected.');
+console.log('%c✅ Atlas4Chrome content script INJECTED', 'color: green; font-weight: bold; font-size: 14px;');
+console.log('Viewport:', window.innerWidth, 'x', window.innerHeight);
+console.log('Page URL:', window.location.href);
 
 /**
  * Visual debug: Show where clicks/types are happening on the page
@@ -36,12 +38,19 @@ function showClickMarker(x, y, color = 'red', label = 'click') {
     
     document.body.appendChild(marker);
     
-    // Remove after 3 seconds
-    setTimeout(() => marker.remove(), 3000);
+    // Also log to console with timestamp
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] 🎯 ${color.toUpperCase()} MARKER at (${x}, ${y}) - ${label}`);
     
-    console.log(`${label} marker at (${x}, ${y})`);
+    // Remove after 3 seconds
+    setTimeout(() => {
+      try {
+        marker.remove();
+        console.log(`[${timestamp}] 🎯 Marker removed after 3s`);
+      } catch (e) {}
+    }, 3000);
   } catch (err) {
-    console.error('Failed to show marker:', err);
+    console.error('❌ Failed to show marker:', err);
   }
 }
 
@@ -296,9 +305,26 @@ async function handleAction(action) {
 
 // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== 'EXEC_ACTION') return;
+  console.log('%c📨 MESSAGE RECEIVED', 'color: blue; font-weight: bold;', message);
+  
+  if (!message || message.type !== 'EXEC_ACTION') {
+    console.log('❌ Ignoring non-EXEC_ACTION message');
+    return;
+  }
+  
   const action = message.action;
-  handleAction(action).then((result) => sendResponse(result)).catch((err) => sendResponse({ success: false, error: err.message }));
+  console.log('%c🎬 EXECUTING ACTION', 'color: orange; font-weight: bold;', action);
+  
+  handleAction(action)
+    .then((result) => {
+      console.log('%c✅ ACTION RESULT', 'color: green;', result);
+      sendResponse(result);
+    })
+    .catch((err) => {
+      console.log('%c❌ ACTION ERROR', 'color: red;', err);
+      sendResponse({ success: false, error: err.message });
+    });
+  
   // Indicate we'll send a response asynchronously
   return true;
 });
