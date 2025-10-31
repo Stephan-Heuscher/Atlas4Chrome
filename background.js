@@ -405,20 +405,42 @@ const ActionExecutor = {
       
       // Handle navigation directly in background (don't rely on content script for navigation)
       if (normalizedAction.action === 'open_web_browser' && normalizedAction.args?.url) {
-        Logger.info(`Navigating tab ${tab.id} to: ${normalizedAction.args.url}`);
+        const targetUrl = normalizedAction.args.url;
+        Logger.info(`Navigating tab ${tab.id} to: ${targetUrl}`);
+        
+        // Update tab URL
         await new Promise((resolve) => {
-          chrome.tabs.update(tab.id, { url: normalizedAction.args.url }, (updatedTab) => {
-            if (chrome.runtime.lastError) {
-              Logger.error(`Navigation error: ${chrome.runtime.lastError.message}`);
-            } else {
-              Logger.info(`Tab ${tab.id} navigation initiated to ${updatedTab?.url}`);
-            }
-            resolve();
-          });
+          chrome.tabs.update(tab.id, { url: targetUrl }, resolve);
         });
-        // Wait for page to load before returning
-        await new Promise(r => setTimeout(r, 2000));
-        return { success: true, url: normalizedAction.args.url };
+        
+        // Wait for page to actually load (poll tab status)
+        let attempts = 0;
+        const maxAttempts = 40; // 4 seconds max (40 * 100ms)
+        while (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 100));
+          
+          const tabs = await new Promise((resolve) => {
+            chrome.tabs.query({ id: tab.id }, resolve);
+          });
+          
+          if (tabs.length === 0) {
+            Logger.warn(`Tab ${tab.id} was closed`);
+            break;
+          }
+          
+          const currentTab = tabs[0];
+          if (currentTab.status === 'complete') {
+            Logger.info(`Tab ${tab.id} navigation complete. URL: ${currentTab.url}`);
+            break;
+          }
+          
+          attempts++;
+          if (attempts % 10 === 0) {
+            Logger.debug(`Waiting for navigation... (${attempts}/${maxAttempts})`);
+          }
+        }
+        
+        return { success: true, url: targetUrl };
       }
 
       // For other actions, send to content script
