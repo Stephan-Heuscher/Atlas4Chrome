@@ -20,30 +20,53 @@ async function clickElement(selector) {
 // Coordinates are raw pixel values from the screenshot
 async function clickAt(xPx, yPx) {
   try {
-    // Convert to client coordinates (accounting for scroll offset)
-    const x = Math.round(xPx);
-    const y = Math.round(yPx);
+    // Clamp coordinates to viewport
+    const x = Math.round(Math.max(0, Math.min(xPx, window.innerWidth - 1)));
+    const y = Math.round(Math.max(0, Math.min(yPx, window.innerHeight - 1)));
+    
+    console.log(`clickAt(${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`);
     
     // Get element at viewport coordinates
     const el = document.elementFromPoint(x, y);
-    if (el) {
-      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
-      el.click();
+    console.log('Element at point:', el?.tagName, el?.className);
+    
+    if (el && el !== document.body && el !== document.documentElement) {
+      // Scroll element into view
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+      
+      // Wait a tiny bit for scroll
+      await new Promise(r => setTimeout(r, 100));
+      
+      // Re-get element after scroll (coordinates changed)
+      const elAfterScroll = document.elementFromPoint(x, y);
+      
+      // Dispatch all necessary events
+      elAfterScroll?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y, buttons: 1 }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      
+      // Also try native click if available
+      if (elAfterScroll?.click) {
+        elAfterScroll.click();
+      }
+      
+      console.log('Clicked element:', elAfterScroll?.tagName);
+      return { success: true };
+    } else {
+      console.log('No valid element found, trying generic click');
+      // Try generic click on document
+      const clickEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y
+      });
+      document.elementFromPoint(x, y)?.dispatchEvent(clickEvent);
       return { success: true };
     }
-    
-    // If no element, try to click at the coordinates anyway (might be on a non-element area)
-    const clickEvent = new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: x,
-      clientY: y
-    });
-    document.elementFromPoint(x, y)?.dispatchEvent(clickEvent);
-    return { success: true };
   } catch (err) {
+    console.error('clickAt error:', err);
     return { success: false, error: err.message };
   }
 }
@@ -53,7 +76,12 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
   try {
     const x = Math.round(xPx);
     const y = Math.round(yPx);
+    
+    console.log(`typeTextAt(${x}, ${y}, "${text}")`);
+    
     const el = document.elementFromPoint(x, y);
+    console.log('Element at point:', el?.tagName, el?.className);
+    
     if (el) {
       el.focus();
       if ('value' in el) {
@@ -64,11 +92,13 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
           el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
           el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
         }
+        console.log('Text typed into input element');
         return { success: true };
       }
       if (el.isContentEditable) {
         el.innerText = text;
         el.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log('Text typed into contentEditable');
         return { success: true };
       }
     }
@@ -78,10 +108,13 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
       ae.value = text;
       ae.dispatchEvent(new Event('input', { bubbles: true }));
       if (press_enter) ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      console.log('Text typed into activeElement');
       return { success: true };
     }
+    console.log('No editable element found');
     return { success: false, error: 'no-editable-element-at-coordinates' };
   } catch (err) {
+    console.error('typeTextAt error:', err);
     return { success: false, error: err.message };
   }
 }
