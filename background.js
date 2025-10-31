@@ -145,6 +145,10 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
       contents.push(userPart);
     }
 
+    // CRITICAL: Add the user part to conversation history so it persists
+    // This must be done BEFORE the API call so it's included in next iteration
+    conversationHistory.push(userPart);
+
     // Computer Use tool declaration
     const tools = [
       {
