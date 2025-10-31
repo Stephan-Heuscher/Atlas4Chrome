@@ -91,7 +91,20 @@ const TabAPI = {
   getNormalTab: async (options = {}) => {
     const query = { lastFocusedWindow: true, ...options };
     const tabs = await new Promise((resolve) => chrome.tabs.query(query, resolve));
-    return tabs?.find(t => t.url && !t.url.startsWith('chrome-extension://')) || null;
+    Logger.debug(`Found ${tabs.length} tabs in window`);
+    
+    // Filter out extension pages
+    const normalTabs = tabs.filter(t => t.url && !t.url.startsWith('chrome-extension://'));
+    Logger.debug(`Filtered to ${normalTabs.length} normal tabs`);
+    
+    if (normalTabs.length === 0) {
+      Logger.warn('No normal tabs found, listing all tabs:', tabs.map(t => ({ id: t.id, url: t.url })));
+      return null;
+    }
+    
+    const tab = normalTabs[0];
+    Logger.debug(`Selected tab ${tab.id}: ${tab.url}`);
+    return tab;
   },
 
   /**
@@ -121,15 +134,17 @@ const TabAPI = {
       // First try to inject content script in case it's not loaded
       chrome.scripting.executeScript({
         target: { tabId },
-        files: ['content.js'],
-        world: 'MAIN'
+        files: ['content.js']
+      }).then(() => {
+        Logger.debug(`Content script injected/already present on tab ${tabId}`);
       }).catch(err => {
         // Injection might fail on restricted pages, but that's OK
         Logger.debug(`Pre-send injection attempt: ${err.message}`);
       });
       
-      // Wait a tiny bit for injection
+      // Wait a bit for injection
       setTimeout(() => {
+        Logger.debug(`Attempting to send message to tab ${tabId}...`);
         chrome.tabs.sendMessage(tabId, message, (resp) => {
           if (chrome.runtime.lastError) {
             Logger.warn(`Message send error (tab ${tabId}): ${chrome.runtime.lastError.message}`);
@@ -139,7 +154,7 @@ const TabAPI = {
           Logger.debug(`Message response from tab ${tabId}:`, resp);
           resolve(resp || { success: false, error: 'No response' });
         });
-      }, 50);
+      }, 100);
     });
   },
 };
@@ -386,14 +401,23 @@ const ActionExecutor = {
       // Normalize action names from Gemini
       const normalizedAction = this.normalizeAction(action);
       
+      Logger.info(`Executing action on tab ${tab.id} (${tab.url}): ${normalizedAction.action}`);
+      
       // Handle navigation directly in background (don't rely on content script for navigation)
       if (normalizedAction.action === 'open_web_browser' && normalizedAction.args?.url) {
-        Logger.info(`Navigating to: ${normalizedAction.args.url}`);
+        Logger.info(`Navigating tab ${tab.id} to: ${normalizedAction.args.url}`);
         await new Promise((resolve) => {
-          chrome.tabs.update(tab.id, { url: normalizedAction.args.url }, resolve);
+          chrome.tabs.update(tab.id, { url: normalizedAction.args.url }, (updatedTab) => {
+            if (chrome.runtime.lastError) {
+              Logger.error(`Navigation error: ${chrome.runtime.lastError.message}`);
+            } else {
+              Logger.info(`Tab ${tab.id} navigation initiated to ${updatedTab?.url}`);
+            }
+            resolve();
+          });
         });
         // Wait for page to load before returning
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
         return { success: true, url: normalizedAction.args.url };
       }
 
