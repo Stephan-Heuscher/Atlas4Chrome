@@ -560,7 +560,7 @@ class Agent {
         await new Promise(r => setTimeout(r, CONFIG.STEP_DELAY_MS));
       }
 
-      // Get active tab on step 1, or use stored tab for subsequent steps
+      // Get active tab on step 1, or refresh tab info for subsequent steps
       if (this.step === 1) {
         activeTab = await TabAPI.getNormalTab();
         if (!activeTab?.id) {
@@ -568,15 +568,16 @@ class Agent {
           break;
         }
       } else {
-        // Verify stored tab still exists
+        // Refresh tab info to get latest URL and state
         const tabs = await new Promise((resolve) => 
-          chrome.tabs.query({ windowId: activeTab.windowId }, resolve)
+          chrome.tabs.query({ id: activeTab.id }, resolve)
         );
-        activeTab = tabs.find(t => t.id === activeTab.id);
-        if (!activeTab?.id) {
-          Logger.warn('Active tab was closed');
+        if (tabs.length === 0) {
+          Logger.warn(`Active tab ${activeTab.id} was closed`);
           break;
         }
+        activeTab = tabs[0];
+        Logger.debug(`Refreshed tab info: ${activeTab.url}`);
       }
       
       const tab = activeTab;
