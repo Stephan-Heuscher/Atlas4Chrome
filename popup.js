@@ -11,54 +11,72 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     
+    statusEl.textContent = 'Detecting active tab...';
+    console.log('=== POPUP: Starting agent detection ===');
+    
     // Get the active tab - try multiple approaches
     let activeTabId = null;
     let activeTabUrl = null;
     
     // Approach 1: Query active tab in current window
+    console.log('Approach 1: Query active tab in currentWindow');
     try {
       const tabs = await new Promise((resolve) => {
-        chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+        chrome.tabs.query({ active: true, currentWindow: true }, (result) => {
+          console.log('Query result:', result);
+          resolve(result);
+        });
       });
       if (tabs && tabs.length > 0) {
         activeTabId = tabs[0].id;
         activeTabUrl = tabs[0].url;
+        console.log(`✓ Approach 1 success: tab ${activeTabId} - ${activeTabUrl}`);
+      } else {
+        console.log('Approach 1 returned empty array');
       }
     } catch (e) {
-      console.error('Query approach 1 failed:', e);
+      console.error('Approach 1 failed:', e);
     }
     
-    // Approach 2: If that didn't work, get all tabs and find the active one
+    // Approach 2: If that didn't work, query all tabs
     if (!activeTabId) {
+      console.log('Approach 2: Query all tabs and find active one');
       try {
         const tabs = await new Promise((resolve) => {
-          chrome.tabs.query({}, resolve);
+          chrome.tabs.query({}, (result) => {
+            console.log('All tabs:', result.map(t => ({ id: t.id, active: t.active, url: t.url })));
+            resolve(result);
+          });
         });
         const activeTab = tabs.find(t => t.active && !t.url?.startsWith('chrome-extension://'));
         if (activeTab) {
           activeTabId = activeTab.id;
           activeTabUrl = activeTab.url;
+          console.log(`✓ Approach 2 success: tab ${activeTabId} - ${activeTabUrl}`);
+        } else {
+          console.log('Approach 2: No active tab found in list');
         }
       } catch (e) {
-        console.error('Query approach 2 failed:', e);
+        console.error('Approach 2 failed:', e);
       }
     }
     
     if (!activeTabId) {
-      statusEl.textContent = 'Error: Could not determine active tab.';
-      console.error('No active tab found');
+      statusEl.textContent = 'Error: Could not detect active tab. Check console.';
+      console.error('✗ FATAL: No active tab found via either approach');
       return;
     }
     
-    console.log(`Starting agent on tab ${activeTabId}: ${activeTabUrl}`);
+    console.log(`✓ FINAL: Starting agent on tab ${activeTabId}: ${activeTabUrl}`);
     statusEl.textContent = `Starting agent on tab ${activeTabId}...`;
     
     chrome.runtime.sendMessage({ type: 'START_AGENT', goal, tabId: activeTabId }, (resp) => {
       if (chrome.runtime.lastError) {
         statusEl.textContent = 'Error: ' + chrome.runtime.lastError.message;
-        console.error('Message send error:', chrome.runtime.lastError);
+        console.error('Message error:', chrome.runtime.lastError);
         return;
       }
+      console.log(`✓ Agent started response:`, resp);
       statusEl.textContent = resp && resp.started ? `Agent started on tab ${activeTabId}.` : 'Failed to start agent.';
     });
   });
