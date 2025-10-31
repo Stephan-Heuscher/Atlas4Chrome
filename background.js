@@ -10,10 +10,10 @@ const CONFIG = {
   MIN_CAPTURE_INTERVAL_MS: 2500,
   MAX_SCREENSHOT_BYTES: 100000,
   CAPTURE_MAX_BYTES: 50000,
-  CAPTURE_QUOTA_BACKOFF_MS: 5000,
+  CAPTURE_QUOTA_BACKOFF_MS: 1000,  // Initial backoff (exponential will increase)
   STEP_DELAY_MS: 800,
   MAX_STEPS_DEFAULT: 10,
-  JPEG_QUALITIES: [20, 15, 10],
+  JPEG_QUALITIES: [20, 15, 10],  // Kept for reference but not used
 };
 
 const STORAGE = {
@@ -158,51 +158,32 @@ const ScreenshotAPI = {
   },
 
   /**
-   * Capture with multiple quality attempts, single call (no quota spam)
+   * Single capture with fixed quality (to avoid quota spam)
    */
   capture: async (windowId = null, maxBytes = CONFIG.CAPTURE_MAX_BYTES) => {
     try {
-      // Try JPEG with aggressive quality levels (low to high compression)
-      for (const quality of CONFIG.JPEG_QUALITIES) {
-        try {
-          const dataUrl = await ScreenshotAPI.captureTab(windowId, 'jpeg', quality);
-          if (!dataUrl) continue;
-          
-          const size = ScreenshotAPI.getSize(dataUrl);
-          if (size <= maxBytes) {
-            Logger.info(`Screenshot: JPEG quality ${quality} (${size} bytes)`);
-            return dataUrl;
-          }
-          Logger.debug(`JPEG quality ${quality} too large (${size} bytes)`);
-        } catch (err) {
-          if (err?.message?.includes('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND')) {
-            const quotaErr = new Error('CAPTURE_QUOTA');
-            quotaErr.code = 'CAPTURE_QUOTA';
-            throw quotaErr;
-          }
-          Logger.warn(`JPEG quality ${quality} failed: ${err.message}`);
-        }
-      }
-
-      // Fallback to PNG
+      // Use a balanced JPEG quality that works for most screenshots
+      const quality = 15; // Lower quality = smaller file, good for Gemini vision
+      
       try {
-        const png = await ScreenshotAPI.captureTab(windowId, 'png');
-        if (png) {
-          const size = ScreenshotAPI.getSize(png);
-          Logger.info(`Screenshot: PNG (${size} bytes)`);
-          if (size <= maxBytes * 2) return png;
+        const dataUrl = await ScreenshotAPI.captureTab(windowId, 'jpeg', quality);
+        if (!dataUrl) {
+          Logger.warn('Failed to capture screenshot: empty result');
+          return null;
         }
+        
+        const size = ScreenshotAPI.getSize(dataUrl);
+        Logger.info(`Screenshot: JPEG quality ${quality} (${size} bytes)`);
+        return dataUrl;
       } catch (err) {
         if (err?.message?.includes('MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND')) {
           const quotaErr = new Error('CAPTURE_QUOTA');
           quotaErr.code = 'CAPTURE_QUOTA';
           throw quotaErr;
         }
-        Logger.warn(`PNG capture failed: ${err.message}`);
+        Logger.warn(`Screenshot capture failed: ${err.message}`);
+        return null;
       }
-
-      Logger.warn('No screenshot captured within size limits');
-      return null;
     } catch (err) {
       if (err?.code === 'CAPTURE_QUOTA') throw err;
       Logger.error(`Screenshot error: ${err.message}`);
@@ -407,6 +388,7 @@ class Agent {
     this.step = 0;
     this.conversationHistory = [];
     this.gemini = new GeminiClient();
+    this.quotaBackoffMultiplier = 1; // For exponential backoff
   }
 
   async getCaptureInterval() {
@@ -440,6 +422,7 @@ class Agent {
       const screenshot = await ScreenshotAPI.capture(tab.windowId);
       if (screenshot) {
         await this.recordCapture();
+        this.quotaBackoffMultiplier = 1; // Reset on success
         const size = ScreenshotAPI.getSize(screenshot);
         if (size > CONFIG.MAX_SCREENSHOT_BYTES) {
           Logger.warn(`Screenshot too large (${size} bytes), omitting`);
@@ -449,8 +432,11 @@ class Agent {
       return screenshot;
     } catch (err) {
       if (err.code === 'CAPTURE_QUOTA') {
-        Logger.warn('Capture quota hit, backing off 5s');
-        await new Promise(r => setTimeout(r, CONFIG.CAPTURE_QUOTA_BACKOFF_MS));
+        // Exponential backoff: 1s, 2s, 4s, 8s...
+        const backoff = CONFIG.CAPTURE_QUOTA_BACKOFF_MS * this.quotaBackoffMultiplier;
+        Logger.warn(`Capture quota hit, backing off ${backoff}ms (attempt ${this.quotaBackoffMultiplier})`);
+        await new Promise(r => setTimeout(r, backoff));
+        this.quotaBackoffMultiplier = Math.min(this.quotaBackoffMultiplier * 2, 16); // Max 16s backoff
         await this.recordCapture();
         return null;
       }
