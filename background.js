@@ -206,11 +206,16 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
     // Response shape: result.candidates[0].content.parts[], where parts can have .function_call
     try {
       const parts = candidate?.content?.parts || [];
+      console.log('Response parts:', parts.length, 'parts found');
+      
       // Collect function_call parts
       const functionCalls = parts.filter((p) => p.function_call).map((p) => p.function_call);
+      console.log('Function calls extracted:', functionCalls.length);
+      
       if (functionCalls.length > 0) {
         // Support multiple actions: return the first for now (agent loop will continue)
         const fc = functionCalls[0];
+        console.log('Executing function:', fc.name, 'with args:', JSON.stringify(fc.args).substring(0, 100));
         // fc has { name: string, args: object }
         let args = fc.args || {};
         
@@ -243,14 +248,24 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
     // Fallback: look for textual JSON in candidate parts
     try {
       const textParts = (result?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('\n');
-      const jsonMatch = String(textParts).match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const actionObj = JSON.parse(jsonMatch[0]);
-        return actionObj;
+      console.log('Text parts extracted, searching for JSON...');
+      
+      if (textParts && textParts.length > 0) {
+        const jsonMatch = String(textParts).match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          console.log('Found JSON in text, attempting parse...');
+          const actionObj = JSON.parse(jsonMatch[0]);
+          console.log('Successfully parsed JSON action:', JSON.stringify(actionObj).substring(0, 100));
+          return actionObj;
+        }
       }
-      return { action: 'done', result: 'No function_call or JSON action found in model response', raw: result };
+      
+      // If we get here, no function_call and no JSON found
+      console.warn('No function_call or JSON action found in model response. Full response:', JSON.stringify(result).substring(0, 200));
+      return { action: 'done', result: 'No function_call or JSON action found in model response' };
     } catch (e) {
       console.error('Error extracting JSON from Gemini response', e);
+      console.warn('Full response for debugging:', JSON.stringify(result).substring(0, 500));
       return { action: 'done', result: `Failed to parse model output: ${e.message}` };
     }
 
@@ -290,7 +305,7 @@ async function runAgentCycle(goal, options = {}) {
   // Mark agent as running so STOP_AGENT can interrupt
   await storageSet({ agentShouldRun: true });
 
-  const MIN_CAPTURE_INTERVAL_MS = 1200; // keep captures >1.2s apart to avoid quota
+  const MIN_CAPTURE_INTERVAL_MS = 2500; // keep captures >2.5s apart to avoid quota hits
 
   // Initialize conversation history for multi-turn context
   let conversationHistory = [];
@@ -324,9 +339,9 @@ async function runAgentCycle(goal, options = {}) {
         screenshot = await captureThumbnail(activeTab.windowId, 15000);
       } catch (err) {
         if (err && err.code === 'CAPTURE_QUOTA') {
-          // The browser reported we hit capture quota. Back off a bit longer and skip the image for this step.
-          console.warn('Capture quota hit, backing off for 2s and skipping screenshot this step.');
-          await new Promise((r) => setTimeout(r, 2000));
+          // The browser reported we hit capture quota. Back off aggressively and skip the image for this step.
+          console.warn('Capture quota hit, backing off for 5s and skipping screenshot this step.');
+          await new Promise((r) => setTimeout(r, 5000));
           // Update last capture time to prevent immediate retries
           await storageSet({ lastCaptureAt: Date.now() });
           screenshot = null;
@@ -392,12 +407,18 @@ async function runAgentCycle(goal, options = {}) {
       break;
     }
 
-    const resp = await sendMessageToTab(tab.id, { type: 'EXEC_ACTION', action: geminiAction });
-    console.log('Content script response:', resp);
+    // Before sending message, verify the tab is still accessible and has content script
+    try {
+      const resp = await sendMessageToTab(tab.id, { type: 'EXEC_ACTION', action: geminiAction });
+      console.log('Content script response:', resp);
 
-    if (!resp || !resp.success) {
-      console.warn('Action failed or no response from content script:', resp);
-      // Optionally decide to retry or abort; here we continue to next step
+      if (!resp || !resp.success) {
+        console.warn('Action failed or no response from content script:', resp);
+        // Optionally decide to retry or abort; here we continue to next step
+      }
+    } catch (err) {
+      console.error('Failed to send action to content script:', err && err.message ? err.message : err);
+      // If the content script is not available, continue to next step rather than aborting
     }
 
     // Small delay between steps to avoid rapid looping and to allow the SW to stay alive
