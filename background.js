@@ -196,14 +196,9 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
     // Save and broadcast raw response for debugging UIs (side panel / popup)
     try { broadcastModelRaw({ response: result }); } catch (e) { /* ignore */ }
 
-    // Append model response to conversation history for next turn
-    const candidate = result?.candidates && result.candidates[0];
-    if (candidate && candidate.content) {
-      conversationHistory.push(candidate.content);
-    }
-
     // Extract function calls from the v1beta generateContent response.
     // Response shape: result.candidates[0].content.parts[], where parts can have .functionCall (note: camelCase, not snake_case)
+    const candidate = result?.candidates && result.candidates[0];
     try {
       const parts = candidate?.content?.parts || [];
       console.log('Response parts:', parts.length, 'parts found');
@@ -213,6 +208,11 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
       console.log('Function calls extracted:', functionCalls.length);
       
       if (functionCalls.length > 0) {
+        // Append model response to conversation history BEFORE returning action
+        if (candidate && candidate.content) {
+          conversationHistory.push(candidate.content);
+        }
+        
         // Support multiple actions: return the first for now (agent loop will continue)
         const fc = functionCalls[0];
         console.log('Executing function:', fc.name, 'with args:', JSON.stringify(fc.args).substring(0, 100));
@@ -416,18 +416,41 @@ async function runAgentCycle(goal, options = {}) {
     }
 
     // Before sending message, verify the tab is still accessible and has content script
+    let actionResult = null;
     try {
       const resp = await sendMessageToTab(tab.id, { type: 'EXEC_ACTION', action: geminiAction });
       console.log('Content script response:', resp);
 
       if (!resp || !resp.success) {
         console.warn('Action failed or no response from content script:', resp);
-        // Optionally decide to retry or abort; here we continue to next step
+        actionResult = { success: false, error: resp?.error || 'Unknown error' };
+      } else {
+        actionResult = resp;
       }
     } catch (err) {
       console.error('Failed to send action to content script:', err && err.message ? err.message : err);
+      actionResult = { success: false, error: err && err.message ? err.message : 'Unknown error' };
       // If the content script is not available, continue to next step rather than aborting
     }
+
+    // CRITICAL: Add function_response turn to conversation history per Computer Use protocol
+    // This tells the model about the execution result so it can decide the next step
+    const functionResponsePart = {
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            name: geminiAction.action,
+            response: actionResult ? {
+              result: actionResult.success ? 'Action executed successfully' : (actionResult.error || 'Unknown error'),
+              success: actionResult.success !== false
+            } : { result: 'No response', success: false }
+          }
+        }
+      ]
+    };
+    conversationHistory.push(functionResponsePart);
+    console.log('Added function_response to conversation history for:', geminiAction.action);
   }
 
   console.log('Agent cycle finished. Steps:', step);
