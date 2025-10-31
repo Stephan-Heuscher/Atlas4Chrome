@@ -203,13 +203,13 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
     }
 
     // Extract function calls from the v1beta generateContent response.
-    // Response shape: result.candidates[0].content.parts[], where parts can have .function_call
+    // Response shape: result.candidates[0].content.parts[], where parts can have .functionCall (note: camelCase, not snake_case)
     try {
       const parts = candidate?.content?.parts || [];
       console.log('Response parts:', parts.length, 'parts found');
       
-      // Collect function_call parts
-      const functionCalls = parts.filter((p) => p.function_call).map((p) => p.function_call);
+      // Collect functionCall parts (API returns camelCase)
+      const functionCalls = parts.filter((p) => p.functionCall || p.function_call).map((p) => p.functionCall || p.function_call);
       console.log('Function calls extracted:', functionCalls.length);
       
       if (functionCalls.length > 0) {
@@ -242,7 +242,7 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
         return { action: fc.name, args };
       }
     } catch (e) {
-      console.warn('Failed to parse function_call from Gemini generateContent response', e);
+      console.warn('Failed to parse functionCall from Gemini generateContent response', e);
     }
 
     // Fallback: look for textual JSON in candidate parts
@@ -314,6 +314,11 @@ async function runAgentCycle(goal, options = {}) {
     step += 1;
     console.log('Agent step', step);
 
+    // Small delay before each step to avoid rapid looping and respect capture intervals
+    if (step > 1) {
+      await new Promise((r) => setTimeout(r, 800));
+    }
+
     // 1) Determine the active tab and capture its visible contents
     let screenshot = null;
     let activeTabs = await new Promise((resolve) => chrome.tabs.query({ active: true, lastFocusedWindow: true }, resolve));
@@ -337,6 +342,9 @@ async function runAgentCycle(goal, options = {}) {
       // Capture a thumbnail sized JPEG to avoid large payloads.
       try {
         screenshot = await captureThumbnail(activeTab.windowId, 15000);
+        if (screenshot) {
+          await storageSet({ lastCaptureAt: Date.now() });
+        }
       } catch (err) {
         if (err && err.code === 'CAPTURE_QUOTA') {
           // The browser reported we hit capture quota. Back off aggressively and skip the image for this step.
@@ -420,9 +428,6 @@ async function runAgentCycle(goal, options = {}) {
       console.error('Failed to send action to content script:', err && err.message ? err.message : err);
       // If the content script is not available, continue to next step rather than aborting
     }
-
-    // Small delay between steps to avoid rapid looping and to allow the SW to stay alive
-    await new Promise((r) => setTimeout(r, 800));
   }
 
   console.log('Agent cycle finished. Steps:', step);
@@ -441,7 +446,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       runAgentCycle(goal).then((res) => {
         console.log('runAgentCycle result:', res);
       }).catch((err) => console.error('Agent error:', err));
-    });
+    }).catch((err) => console.error('Failed to set agentShouldRun:', err));
 
     sendResponse({ started: true });
     // Return true when sending response asynchronously — indicate we'll send an async response
@@ -452,8 +457,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Cooperative stop: set flag so runAgentCycle will exit between steps
     storageSet({ agentShouldRun: false }).then(() => {
       console.log('STOP_AGENT received; agentShouldRun set to false');
-    });
+    }).catch((err) => console.error('Failed to set agentShouldRun to false:', err));
     sendResponse({ stopped: true });
     return true;
+  }
+
+  if (message.type === 'REQUEST_SAFETY_CONFIRMATION') {
+    // Forward safety confirmation request to all tabs/extensions
+    console.log('Forwarding safety confirmation request');
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn('Safety confirmation not acknowledged:', chrome.runtime.lastError.message);
+        sendResponse({ safety_acknowledged: false });
+      } else {
+        sendResponse(response);
+      }
+    }).catch((err) => {
+      console.warn('Failed to forward safety confirmation:', err && err.message ? err.message : err);
+      sendResponse({ safety_acknowledged: false });
+    });
+    return true; // Will respond asynchronously
   }
 });
