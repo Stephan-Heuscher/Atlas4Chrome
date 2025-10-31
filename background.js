@@ -59,14 +59,19 @@ const StorageAPI = {
   },
   broadcast: (type, payload) => {
     try {
-      StorageAPI.local.set({ lastModelResponse: { type, payload } });
+      // Don't await, but catch any errors
+      StorageAPI.local.set({ lastModelResponse: { type, payload } })
+        .catch(e => Logger.warn('Failed to persist debug info:', e));
     } catch (e) {
-      Logger.warn('Failed to persist debug info', e);
+      Logger.warn('Failed to persist debug info:', e);
     }
     try {
       chrome.runtime.sendMessage({ type: 'MODEL_RAW', payload });
     } catch (e) {
-      // Ignore if UI not available
+      // Ignore if UI not available - check lastError to suppress unhandled rejection
+      if (chrome.runtime.lastError) {
+        // Message target doesn't exist, which is OK
+      }
     }
   },
 };
@@ -550,14 +555,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'REQUEST_SAFETY_CONFIRMATION') {
     Logger.info('Safety confirmation requested');
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        Logger.warn('No safety response');
-        sendResponse({ safety_acknowledged: false });
-      } else {
-        sendResponse(response);
-      }
-    });
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          Logger.warn('No safety response:', chrome.runtime.lastError.message);
+          sendResponse({ safety_acknowledged: false });
+        } else {
+          sendResponse(response);
+        }
+      });
+    } catch (err) {
+      Logger.warn('Failed to send safety confirmation message:', err.message);
+      sendResponse({ safety_acknowledged: false });
+    }
     return true;
   }
 });
