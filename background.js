@@ -66,12 +66,16 @@ const StorageAPI = {
       Logger.warn('Failed to persist debug info:', e);
     }
     try {
-      chrome.runtime.sendMessage({ type: 'MODEL_RAW', payload });
+      // Use callback to suppress "Receiving end does not exist" errors
+      chrome.runtime.sendMessage(
+        { type: 'MODEL_RAW', payload },
+        () => {
+          // Clear any lastError to suppress unhandled rejection
+          chrome.runtime.lastError; // Just reading it clears the error state
+        }
+      );
     } catch (e) {
-      // Ignore if UI not available - check lastError to suppress unhandled rejection
-      if (chrome.runtime.lastError) {
-        // Message target doesn't exist, which is OK
-      }
+      // Ignore send failures
     }
   },
 };
