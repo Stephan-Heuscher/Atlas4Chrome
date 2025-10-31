@@ -117,15 +117,29 @@ const TabAPI = {
   sendMessage: async (tabId, message) => {
     return new Promise((resolve) => {
       Logger.debug(`Sending message to tab ${tabId}:`, message);
-      chrome.tabs.sendMessage(tabId, message, (resp) => {
-        if (chrome.runtime.lastError) {
-          Logger.warn(`Message send error (tab ${tabId}): ${chrome.runtime.lastError.message}`);
-          resolve({ success: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-        Logger.debug(`Message response from tab ${tabId}:`, resp);
-        resolve(resp || { success: false, error: 'No response' });
+      
+      // First try to inject content script in case it's not loaded
+      chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js'],
+        world: 'MAIN'
+      }).catch(err => {
+        // Injection might fail on restricted pages, but that's OK
+        Logger.debug(`Pre-send injection attempt: ${err.message}`);
       });
+      
+      // Wait a tiny bit for injection
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, message, (resp) => {
+          if (chrome.runtime.lastError) {
+            Logger.warn(`Message send error (tab ${tabId}): ${chrome.runtime.lastError.message}`);
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          Logger.debug(`Message response from tab ${tabId}:`, resp);
+          resolve(resp || { success: false, error: 'No response' });
+        });
+      }, 50);
     });
   },
 };
@@ -372,8 +386,19 @@ const ActionExecutor = {
       // Normalize action names from Gemini
       const normalizedAction = this.normalizeAction(action);
       
-      // Don't try to inject - content script is already loaded via manifest
-      // Just send message directly to the tab
+      // Handle navigation directly in background (don't rely on content script for navigation)
+      if (normalizedAction.action === 'open_web_browser' && normalizedAction.args?.url) {
+        Logger.info(`Navigating to: ${normalizedAction.args.url}`);
+        await new Promise((resolve) => {
+          chrome.tabs.update(tab.id, { url: normalizedAction.args.url }, resolve);
+        });
+        // Wait for page to load before returning
+        await new Promise(r => setTimeout(r, 1000));
+        return { success: true, url: normalizedAction.args.url };
+      }
+
+      // For other actions, send to content script
+      Logger.debug(`Sending action to tab ${tab.id}: ${normalizedAction.action}`);
       const response = await TabAPI.sendMessage(tab.id, {
         type: 'EXEC_ACTION',
         action: normalizedAction
