@@ -55,38 +55,139 @@ function captureVisibleTabAsync(windowId = null, format = 'jpeg', quality = 60) 
   });
 }
 
-// Try to capture a small thumbnail by lowering JPEG quality until the base64
-// payload is below maxBytes or until qualities are exhausted.
+// OPTIMIZATION: Capture screenshot ONCE, then compress/resize internally using Canvas
+// This avoids repeated captureVisibleTab calls that hit the quota limit.
+// Try different JPEG qualities and sizes on the captured image until it fits maxBytes.
 async function captureThumbnail(windowId = null, maxBytes = 15000) {
-  const qualities = [60, 40, 25, 10];
-  let sawQuotaError = false;
-  for (const q of qualities) {
-    try {
-      const dataUrl = await captureVisibleTabAsync(windowId, 'jpeg', q);
-      if (!dataUrl) continue;
-      const base64 = dataUrl.split(',')[1] || '';
-      if (base64.length <= maxBytes) return dataUrl;
-      // otherwise continue to next lower quality
-    } catch (err) {
-      console.warn('captureVisibleTab failed at quality', q, err && err.message ? err.message : err);
-      if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) sawQuotaError = true;
-    }
-  }
-  // As a last resort attempt a PNG capture (may be larger) and return it.
   try {
-    const png = await captureVisibleTabAsync(windowId, 'png');
-    return png;
-  } catch (err) {
-    console.warn('Final PNG capture failed', err && err.message ? err.message : err);
-    if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) sawQuotaError = true;
-    // If we saw a quota error, surface that to caller so they can backoff more aggressively
-    if (sawQuotaError) {
-      const e = new Error('CAPTURE_QUOTA');
-      e.code = 'CAPTURE_QUOTA';
-      throw e;
+    // Step 1: Capture the tab ONCE as PNG (highest fidelity for internal processing)
+    let screenshot = null;
+    try {
+      screenshot = await captureVisibleTabAsync(windowId, 'png');
+    } catch (err) {
+      console.warn('Initial PNG capture failed', err && err.message ? err.message : err);
+      if (err && err.message && /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(err.message)) {
+        const e = new Error('CAPTURE_QUOTA');
+        e.code = 'CAPTURE_QUOTA';
+        throw e;
+      }
+      return null;
     }
+
+    if (!screenshot) return null;
+
+    // Step 2: Try different JPEG qualities on the SAME captured image (no additional captures)
+    const qualities = [60, 40, 25, 10];
+    for (const quality of qualities) {
+      try {
+        const compressed = await compressImageToDataUrl(screenshot, quality, maxBytes);
+        if (compressed) {
+          console.log('Compressed to quality', quality, '- size:', compressed.split(',')[1].length, 'bytes');
+          return compressed;
+        }
+      } catch (err) {
+        console.warn('Failed to compress at quality', quality, err && err.message ? err.message : err);
+      }
+    }
+
+    // Step 3: If no quality works, try resizing the image smaller
+    try {
+      const resized = await resizeImageToDataUrl(screenshot, 0.75, maxBytes); // 75% of original size
+      if (resized) {
+        console.log('Resized image - size:', resized.split(',')[1].length, 'bytes');
+        return resized;
+      }
+    } catch (err) {
+      console.warn('Failed to resize image', err && err.message ? err.message : err);
+    }
+
+    // Step 4: Return original if all else fails
+    return screenshot;
+  } catch (err) {
+    if (err && err.code === 'CAPTURE_QUOTA') {
+      throw err; // Re-throw quota errors so caller can backoff
+    }
+    console.warn('captureThumbnail error:', err && err.message ? err.message : err);
     return null;
   }
+}
+
+// Internal helper: Compress image via Canvas to JPEG at specified quality
+// Returns data URL if compressed size fits maxBytes, otherwise null
+async function compressImageToDataUrl(dataUrl, quality, maxBytes) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        
+        // Try this quality level
+        const jpeg = canvas.toDataURL('image/jpeg', quality / 100);
+        const base64 = jpeg.split(',')[1] || '';
+        
+        if (base64.length <= maxBytes) {
+          resolve(jpeg);
+        } else {
+          resolve(null);
+        }
+      } catch (err) {
+        console.warn('Canvas compression error:', err);
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      console.warn('Image load failed for compression');
+      resolve(null);
+    };
+    img.src = dataUrl;
+  });
+}
+
+// Internal helper: Resize image via Canvas to fit maxBytes
+// Scales down by scale factor (e.g., 0.75 = 75% of original)
+async function resizeImageToDataUrl(dataUrl, scaleFactor, maxBytes) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scaleFactor);
+        canvas.height = Math.round(img.height * scaleFactor);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        // Export as JPEG with good quality
+        const jpeg = canvas.toDataURL('image/jpeg', 0.8);
+        const base64 = jpeg.split(',')[1] || '';
+        
+        if (base64.length <= maxBytes) {
+          resolve(jpeg);
+        } else {
+          resolve(null);
+        }
+      } catch (err) {
+        console.warn('Canvas resize error:', err);
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      console.warn('Image load failed for resize');
+      resolve(null);
+    };
+    img.src = dataUrl;
+  });
 }
 
 // Utility: promisified sendMessage to tab
