@@ -628,12 +628,12 @@ class Agent {
       // Execute action
       const result = await ActionExecutor.execute(tab, geminiAction);
       
-      // Re-query current tab by ID (tab reference may be stale)
-      const currentTabQuery = await new Promise((resolve) => 
-        chrome.tabs.query({ windowId: tab.windowId }, resolve)
+      // Get current tab URL (always query by tab ID, not window)
+      const allTabs = await new Promise((resolve) => 
+        chrome.tabs.query({}, resolve)
       );
-      const currentTab = currentTabQuery?.find(t => !t.url?.startsWith('chrome-extension://'));
-      const currentUrl = currentTab?.url || tab.url;
+      const updatedTab = allTabs.find(t => t.id === tab.id);
+      const currentUrl = updatedTab?.url || tab.url;
 
       // Add function response
       const funcResponse = await ActionExecutor.buildFunctionResponse(
