@@ -113,7 +113,7 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
   const geminiApiKey = await storageSyncGet('geminiApiKey');
   if (!geminiApiKey) {
     console.error('Gemini API key not found. Please set it in the extension options.');
-    return { action: 'done', result: 'API key is missing.' };
+    return { action: 'done', result: 'API key is missing.', conversationHistory };
   }
 
   try {
@@ -209,8 +209,12 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
       
       if (functionCalls.length > 0) {
         // Append model response to conversation history BEFORE returning action
+        // The model response must include role: 'model' for the API protocol
         if (candidate && candidate.content) {
-          conversationHistory.push(candidate.content);
+          conversationHistory.push({
+            role: 'model',
+            parts: candidate.content.parts || []
+          });
         }
         
         // Support multiple actions: return the first for now (agent loop will continue)
@@ -227,7 +231,7 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
             const userConfirmed = await requestSafetyConfirmation(args.safety_decision.explanation);
             if (!userConfirmed) {
               console.log('User denied safety confirmation. Stopping agent.');
-              return { action: 'done', result: 'User denied safety confirmation.' };
+              return { action: 'done', result: 'User denied safety confirmation.', conversationHistory };
             }
             // User confirmed: include safety_acknowledgement in the response and continue
             console.log('User confirmed safety action. Proceeding.');
@@ -238,8 +242,8 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
         if (typeof args === 'string') {
           try { args = JSON.parse(args); } catch (e) { /* keep as string */ }
         }
-        // Return normalized action object containing the function call
-        return { action: fc.name, args };
+        // Return normalized action object containing the function call AND the updated history
+        return { action: fc.name, args, conversationHistory };
       }
     } catch (e) {
       console.warn('Failed to parse functionCall from Gemini generateContent response', e);
@@ -262,16 +266,16 @@ async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory =
       
       // If we get here, no function_call and no JSON found
       console.warn('No function_call or JSON action found in model response. Full response:', JSON.stringify(result).substring(0, 200));
-      return { action: 'done', result: 'No function_call or JSON action found in model response' };
+      return { action: 'done', result: 'No function_call or JSON action found in model response', conversationHistory };
     } catch (e) {
       console.error('Error extracting JSON from Gemini response', e);
       console.warn('Full response for debugging:', JSON.stringify(result).substring(0, 500));
-      return { action: 'done', result: `Failed to parse model output: ${e.message}` };
+      return { action: 'done', result: `Failed to parse model output: ${e.message}`, conversationHistory };
     }
 
   } catch (err) {
     console.error('Error calling Gemini or parsing response:', err);
-    const payload = { action: 'done', result: `An error occurred: ${err.message}` };
+    const payload = { action: 'done', result: `An error occurred: ${err.message}`, conversationHistory };
     try { broadcastModelRaw({ error: err.message }); } catch (e) {}
     return payload;
   }
@@ -384,6 +388,10 @@ async function runAgentCycle(goal, options = {}) {
     let geminiAction = null;
     try {
       geminiAction = await sendToGemini(screenshot, goal, step - 1, conversationHistory);
+      // CRITICAL: Update conversationHistory from the API response for next iteration
+      if (geminiAction && geminiAction.conversationHistory) {
+        conversationHistory = geminiAction.conversationHistory;
+      }
     } catch (err) {
       console.error('Gemini API call error:', err);
       break;
