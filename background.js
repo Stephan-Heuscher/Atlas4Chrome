@@ -420,15 +420,15 @@ const ActionExecutor = {
           await new Promise(r => setTimeout(r, 100));
           
           const tabs = await new Promise((resolve) => {
-            chrome.tabs.query({ id: tab.id }, resolve);
+            chrome.tabs.query({}, resolve);
           });
           
-          if (tabs.length === 0) {
+          const currentTab = tabs.find(t => t.id === tab.id);
+          if (!currentTab) {
             Logger.warn(`Tab ${tab.id} was closed`);
             break;
           }
           
-          const currentTab = tabs[0];
           if (currentTab.status === 'complete') {
             Logger.info(`Tab ${tab.id} navigation complete. URL: ${currentTab.url}`);
             break;
