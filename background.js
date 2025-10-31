@@ -109,7 +109,7 @@ function sendMessageToTab(tabId, message) {
 // Use the v1beta2 generateContent endpoint which supports the Computer Use payload shape
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-computer-use-preview-10-2025:generateContent';
 
-async function sendToGemini(screenshotDataUrl, goal, step) {
+async function sendToGemini(screenshotDataUrl, goal, step, conversationHistory = []) {
   const geminiApiKey = await storageSyncGet('geminiApiKey');
   if (!geminiApiKey) {
     console.error('Gemini API key not found. Please set it in the extension options.');
@@ -126,16 +126,24 @@ async function sendToGemini(screenshotDataUrl, goal, step) {
     // https://ai.google.dev/gemini-api/docs/computer-use#send-request
     // The model works with normalized 0-1000 coordinates regardless of input image dimensions.
     // Recommended screen size: 1440x900.
-    const contents = [
-      {
-        role: 'user',
-        parts: [
-          { text: userText },
-          // attach screenshot as inline_data part if available
-          ...(screenshotBase64 ? [{ inline_data: { mime_type: 'image/png', data: screenshotBase64 } }] : [])
-        ]
-      }
-    ];
+    const userPart = {
+      role: 'user',
+      parts: [
+        { text: userText },
+        // attach screenshot as inline_data part if available
+        ...(screenshotBase64 ? [{ inline_data: { mime_type: 'image/png', data: screenshotBase64 } }] : [])
+      ]
+    };
+
+    // Build contents with conversation history for multi-turn context
+    let contents = [...conversationHistory];
+    // If no history, start fresh; otherwise append to existing
+    if (contents.length === 0) {
+      contents.push(userPart);
+    } else {
+      // Append the new user message
+      contents.push(userPart);
+    }
 
     // Computer Use tool declaration
     const tools = [
@@ -188,10 +196,15 @@ async function sendToGemini(screenshotDataUrl, goal, step) {
     // Save and broadcast raw response for debugging UIs (side panel / popup)
     try { broadcastModelRaw({ response: result }); } catch (e) { /* ignore */ }
 
+    // Append model response to conversation history for next turn
+    const candidate = result?.candidates && result.candidates[0];
+    if (candidate && candidate.content) {
+      conversationHistory.push(candidate.content);
+    }
+
     // Extract function calls from the v1beta generateContent response.
     // Response shape: result.candidates[0].content.parts[], where parts can have .function_call
     try {
-      const candidate = result?.candidates && result.candidates[0];
       const parts = candidate?.content?.parts || [];
       // Collect function_call parts
       const functionCalls = parts.filter((p) => p.function_call).map((p) => p.function_call);
@@ -205,10 +218,14 @@ async function sendToGemini(screenshotDataUrl, goal, step) {
         if (args.safety_decision) {
           console.warn('Safety decision detected:', args.safety_decision);
           if (args.safety_decision.decision === 'require_confirmation') {
-            // TODO: Implement user confirmation UI in the side panel
-            // For now, log a warning and treat as unsafe
-            console.warn('Action requires user confirmation. Model suggests:', args.safety_decision.explanation);
-            return { action: 'done', result: `Safety confirmation required: ${args.safety_decision.explanation}` };
+            // Request user confirmation via side panel
+            const userConfirmed = await requestSafetyConfirmation(args.safety_decision.explanation);
+            if (!userConfirmed) {
+              console.log('User denied safety confirmation. Stopping agent.');
+              return { action: 'done', result: 'User denied safety confirmation.' };
+            }
+            // User confirmed: include safety_acknowledgement in the response and continue
+            console.log('User confirmed safety action. Proceeding.');
           }
         }
         
@@ -245,6 +262,25 @@ async function sendToGemini(screenshotDataUrl, goal, step) {
   }
 }
 
+// Request safety confirmation from the user via the side panel
+function requestSafetyConfirmation(explanation) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'REQUEST_SAFETY_CONFIRMATION', explanation },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn('Failed to request safety confirmation:', chrome.runtime.lastError);
+          // If side panel is not available, default to deny
+          resolve(false);
+          return;
+        }
+        const allowed = response && response.safety_acknowledged === true;
+        resolve(allowed);
+      }
+    );
+  });
+}
+
 // Main agent loop: runs until the model returns an action { action: 'done' }
 async function runAgentCycle(goal, options = {}) {
   console.log('Agent starting with goal:', goal);
@@ -255,6 +291,9 @@ async function runAgentCycle(goal, options = {}) {
   await storageSet({ agentShouldRun: true });
 
   const MIN_CAPTURE_INTERVAL_MS = 1200; // keep captures >1.2s apart to avoid quota
+
+  // Initialize conversation history for multi-turn context
+  let conversationHistory = [];
 
   while (step < maxSteps) {
     step += 1;
@@ -318,10 +357,10 @@ async function runAgentCycle(goal, options = {}) {
       break;
     }
 
-    // 2) Send screenshot + goal to Gemini (placeholder)
+    // 2) Send screenshot + goal to Gemini
     let geminiAction = null;
     try {
-      geminiAction = await sendToGemini(screenshot, goal, step - 1);
+      geminiAction = await sendToGemini(screenshot, goal, step - 1, conversationHistory);
     } catch (err) {
       console.error('Gemini API call error:', err);
       break;

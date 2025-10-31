@@ -5,6 +5,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const optionsLink = document.getElementById('optionsLink');
 
+  // Safety confirmation UI elements
+  const safetyDialog = document.getElementById('safetyDialog');
+  const safetyExplanation = document.getElementById('safetyExplanation');
+  const safetyAllow = document.getElementById('safetyAllow');
+  const safetyDeny = document.getElementById('safetyDeny');
+  let pendingSafetyCallback = null;
+
   optionsLink.addEventListener('click', (e) => {
     e.preventDefault();
     // Open options page
@@ -72,4 +79,37 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Safety confirmation handlers
+  safetyAllow.addEventListener('click', () => {
+    statusEl.textContent = 'Safety confirmation: ALLOW';
+    safetyDialog.style.display = 'none';
+    if (pendingSafetyCallback) {
+      pendingSafetyCallback(true);
+      pendingSafetyCallback = null;
+    }
+  });
+
+  safetyDeny.addEventListener('click', () => {
+    statusEl.textContent = 'Safety confirmation: DENY';
+    safetyDialog.style.display = 'none';
+    if (pendingSafetyCallback) {
+      pendingSafetyCallback(false);
+      pendingSafetyCallback = null;
+    }
+  });
+
+  // Listen for safety confirmation requests from background
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.type !== 'REQUEST_SAFETY_CONFIRMATION') return;
+    
+    // Show the safety dialog with explanation
+    safetyExplanation.textContent = msg.explanation || 'The agent is about to perform an action that requires your confirmation.';
+    safetyDialog.style.display = 'block';
+    
+    // Store callback to respond when user confirms/denies
+    pendingSafetyCallback = (allowed) => {
+      sendResponse({ safety_acknowledged: allowed });
+    };
+  });
 });

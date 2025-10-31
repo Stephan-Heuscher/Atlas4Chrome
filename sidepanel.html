@@ -23,6 +23,17 @@
       <a id="optionsLink" href="#">Options</a>
     </div>
     <div id="status">Ready</div>
+
+    <!-- Safety Confirmation Dialog (hidden by default) -->
+    <div id="safetyDialog" style="display:none; margin-top:15px; padding:10px; border:2px solid #ff9800; background:#fff3e0; border-radius:4px;">
+      <h4 style="margin-top:0; color:#e65100;">⚠️ Safety Confirmation Required</h4>
+      <p id="safetyExplanation" style="font-size:13px; margin:10px 0;"></p>
+      <div style="display:flex; gap:8px;">
+        <button id="safetyAllow" style="background-color:#4CAF50; color:white; cursor:pointer;">Allow</button>
+        <button id="safetyDeny" style="background-color:#f44336; color:white; cursor:pointer;">Deny</button>
+      </div>
+    </div>
+
   <h4>Model response (debug)</h4>
   <textarea id="debug" readonly style="width:100%;height:200px;font-family:monospace"></textarea>
   <div><button id="copyDebug">Copy debug</button></div>
