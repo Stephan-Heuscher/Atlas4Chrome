@@ -19,14 +19,27 @@ document.addEventListener('DOMContentLoaded', () => {
     else window.open('options.html');
   });
 
-  startBtn.addEventListener('click', () => {
+  startBtn.addEventListener('click', async () => {
     const goal = goalEl.value.trim();
     if (!goal) {
       statusEl.textContent = 'Please enter a goal.';
       return;
     }
+    
+    // Get the active tab in the current window
+    const tabs = await new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+    });
+    
+    if (tabs.length === 0) {
+      statusEl.textContent = 'Error: No active tab found.';
+      return;
+    }
+    
+    const activeTabId = tabs[0].id;
     statusEl.textContent = 'Starting agent...';
-    chrome.runtime.sendMessage({ type: 'START_AGENT', goal }, (resp) => {
+    
+    chrome.runtime.sendMessage({ type: 'START_AGENT', goal, tabId: activeTabId }, (resp) => {
       if (chrome.runtime.lastError) {
         statusEl.textContent = 'Error: ' + chrome.runtime.lastError.message;
         return;

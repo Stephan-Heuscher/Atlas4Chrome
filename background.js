@@ -485,6 +485,7 @@ class Agent {
   constructor(goal, options = {}) {
     this.goal = goal;
     this.maxSteps = options.maxSteps || CONFIG.MAX_STEPS_DEFAULT;
+    this.startTabId = options.startTabId || null; // Optional: start with specific tab
     this.step = 0;
     this.conversationHistory = [];
     this.gemini = new GeminiClient();
@@ -560,23 +561,39 @@ class Agent {
         await new Promise(r => setTimeout(r, CONFIG.STEP_DELAY_MS));
       }
 
-      // Get active tab on step 1, or refresh tab info for subsequent steps
+      // Get active tab on step 1
       if (this.step === 1) {
-        activeTab = await TabAPI.getNormalTab();
+        if (this.startTabId) {
+          // Use specified tab
+          const tabs = await new Promise((resolve) => 
+            chrome.tabs.queryAll ? chrome.tabs.query({}, resolve) : resolve([])
+          );
+          activeTab = tabs.find(t => t.id === this.startTabId);
+          if (!activeTab) {
+            Logger.warn(`Start tab ${this.startTabId} not found`);
+            activeTab = await TabAPI.getNormalTab();
+          }
+        } else {
+          // Get current focused tab
+          activeTab = await TabAPI.getNormalTab();
+        }
+        
         if (!activeTab?.id) {
           Logger.warn('No active tab found');
           break;
         }
+        Logger.info(`Selected tab ${activeTab.id}: ${activeTab.url}`);
       } else {
         // Refresh tab info to get latest URL and state
         const tabs = await new Promise((resolve) => 
-          chrome.tabs.query({ id: activeTab.id }, resolve)
+          chrome.tabs.query({}, resolve)
         );
-        if (tabs.length === 0) {
+        const refreshedTab = tabs.find(t => t.id === activeTab.id);
+        if (!refreshedTab) {
           Logger.warn(`Active tab ${activeTab.id} was closed`);
           break;
         }
-        activeTab = tabs[0];
+        activeTab = refreshedTab;
         Logger.debug(`Refreshed tab info: ${activeTab.url}`);
       }
       
@@ -642,7 +659,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'START_AGENT') {
     const goal = message.goal || 'Unknown goal';
-    const agent = new Agent(goal);
+    const startTabId = message.tabId; // Optional: specific tab to work on
+    
+    const agent = new Agent(goal, { startTabId });
     agent.run()
       .then(result => Logger.info(`Agent completed:`, result))
       .catch(err => Logger.error(`Agent error:`, err));
