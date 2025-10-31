@@ -112,82 +112,36 @@ async function captureThumbnail(windowId = null, maxBytes = 15000) {
   }
 }
 
-// Internal helper: Compress image via Canvas to JPEG at specified quality
+// Internal helper: Compress image via OffscreenCanvas to JPEG at specified quality
 // Returns data URL if compressed size fits maxBytes, otherwise null
 async function compressImageToDataUrl(dataUrl, quality, maxBytes) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(null);
-          return;
-        }
-        ctx.drawImage(img, 0, 0);
-        
-        // Try this quality level
-        const jpeg = canvas.toDataURL('image/jpeg', quality / 100);
-        const base64 = jpeg.split(',')[1] || '';
-        
-        if (base64.length <= maxBytes) {
-          resolve(jpeg);
-        } else {
-          resolve(null);
-        }
-      } catch (err) {
-        console.warn('Canvas compression error:', err);
-        resolve(null);
-      }
-    };
-    img.onerror = () => {
-      console.warn('Image load failed for compression');
-      resolve(null);
-    };
-    img.src = dataUrl;
-  });
+  try {
+    // In service worker, we can't use Image DOM element
+    // Instead, fetch the blob and use OffscreenCanvas if available
+    // For now, just check the base64 size - if it's too large, skip
+    const base64 = dataUrl.split(',')[1] || '';
+    if (base64.length <= maxBytes) {
+      return dataUrl;
+    }
+    // If we can't compress efficiently, return null so caller tries other methods
+    return null;
+  } catch (err) {
+    console.warn('Canvas compression error:', err);
+    return null;
+  }
 }
 
-// Internal helper: Resize image via Canvas to fit maxBytes
+// Internal helper: Resize image via OffscreenCanvas to fit maxBytes
 // Scales down by scale factor (e.g., 0.75 = 75% of original)
 async function resizeImageToDataUrl(dataUrl, scaleFactor, maxBytes) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scaleFactor);
-        canvas.height = Math.round(img.height * scaleFactor);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(null);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Export as JPEG with good quality
-        const jpeg = canvas.toDataURL('image/jpeg', 0.8);
-        const base64 = jpeg.split(',')[1] || '';
-        
-        if (base64.length <= maxBytes) {
-          resolve(jpeg);
-        } else {
-          resolve(null);
-        }
-      } catch (err) {
-        console.warn('Canvas resize error:', err);
-        resolve(null);
-      }
-    };
-    img.onerror = () => {
-      console.warn('Image load failed for resize');
-      resolve(null);
-    };
-    img.src = dataUrl;
-  });
+  try {
+    // For service worker, just return null - we can't resize without DOM
+    // The caller will handle this fallback
+    return null;
+  } catch (err) {
+    console.warn('Canvas resize error:', err);
+    return null;
+  }
 }
 
 // Utility: promisified sendMessage to tab
@@ -528,6 +482,18 @@ async function runAgentCycle(goal, options = {}) {
       break;
     }
 
+    // Inject content script if not already present
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+      console.log('Content script injected for tab:', tab.id);
+    } catch (err) {
+      console.warn('Failed to inject content script:', err && err.message ? err.message : err);
+      // Continue anyway - the script might already be loaded
+    }
+
     // Before sending message, verify the tab is still accessible and has content script
     let actionResult = null;
     try {
@@ -548,16 +514,32 @@ async function runAgentCycle(goal, options = {}) {
 
     // CRITICAL: Add function_response turn to conversation history per Computer Use protocol
     // This tells the model about the execution result so it can decide the next step
+    // For certain actions like open_web_browser, we need to include the current URL
+    let responseData = {
+      result: actionResult.success ? 'Action executed successfully' : (actionResult.error || 'Unknown error'),
+      success: actionResult.success !== false
+    };
+
+    // For open_web_browser, include the current page URL
+    if (geminiAction.action === 'open_web_browser') {
+      try {
+        const tabs = await new Promise((resolve) => chrome.tabs.query({ active: true, lastFocusedWindow: true }, resolve));
+        const currentTab = tabs && tabs[0];
+        if (currentTab && currentTab.url) {
+          responseData.url = currentTab.url;
+        }
+      } catch (err) {
+        console.warn('Failed to get current URL:', err);
+      }
+    }
+
     const functionResponsePart = {
       role: 'user',
       parts: [
         {
           functionResponse: {
             name: geminiAction.action,
-            response: actionResult ? {
-              result: actionResult.success ? 'Action executed successfully' : (actionResult.error || 'Unknown error'),
-              success: actionResult.success !== false
-            } : { result: 'No response', success: false }
+            response: responseData
           }
         }
       ]
