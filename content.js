@@ -3,6 +3,48 @@
 
 console.log('Atlas4Chrome content script injected.');
 
+/**
+ * Visual debug: Show where clicks/types are happening on the page
+ */
+function showClickMarker(x, y, color = 'red', label = 'click') {
+  try {
+    const marker = document.createElement('div');
+    marker.style.position = 'fixed';
+    marker.style.left = (x - 15) + 'px';
+    marker.style.top = (y - 15) + 'px';
+    marker.style.width = '30px';
+    marker.style.height = '30px';
+    marker.style.borderRadius = '50%';
+    marker.style.border = `3px solid ${color}`;
+    marker.style.backgroundColor = 'transparent';
+    marker.style.zIndex = '999999';
+    marker.style.pointerEvents = 'none';
+    marker.title = `${label} at (${x}, ${y})`;
+    
+    // Add text label
+    const text = document.createElement('div');
+    text.textContent = label.charAt(0).toUpperCase();
+    text.style.position = 'absolute';
+    text.style.top = '50%';
+    text.style.left = '50%';
+    text.style.transform = 'translate(-50%, -50%)';
+    text.style.color = color;
+    text.style.fontSize = '10px';
+    text.style.fontWeight = 'bold';
+    text.style.fontFamily = 'monospace';
+    marker.appendChild(text);
+    
+    document.body.appendChild(marker);
+    
+    // Remove after 3 seconds
+    setTimeout(() => marker.remove(), 3000);
+    
+    console.log(`${label} marker at (${x}, ${y})`);
+  } catch (err) {
+    console.error('Failed to show marker:', err);
+  }
+}
+
 async function clickElement(selector) {
   try {
     const el = document.querySelector(selector);
@@ -26,9 +68,12 @@ async function clickAt(xPx, yPx) {
     
     console.log(`clickAt(${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`);
     
+    // Show visual marker
+    showClickMarker(x, y, 'red', 'C');
+    
     // Get element at viewport coordinates
     const el = document.elementFromPoint(x, y);
-    console.log('Element at point:', el?.tagName, el?.className);
+    console.log('Element at point:', el?.tagName, el?.className, el?.id);
     
     if (el && el !== document.body && el !== document.documentElement) {
       // Scroll element into view
@@ -50,7 +95,7 @@ async function clickAt(xPx, yPx) {
         elAfterScroll.click();
       }
       
-      console.log('Clicked element:', elAfterScroll?.tagName);
+      console.log('Clicked element:', elAfterScroll?.tagName, elAfterScroll?.id, elAfterScroll?.className);
       return { success: true };
     } else {
       console.log('No valid element found, trying generic click');
@@ -78,6 +123,9 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
     const y = Math.round(yPx);
     
     console.log(`typeTextAt(${x}, ${y}, "${text}")`);
+    
+    // Show visual marker
+    showClickMarker(x, y, 'blue', 'T');
     
     const el = document.elementFromPoint(x, y);
     console.log('Element at point:', el?.tagName, el?.className);
