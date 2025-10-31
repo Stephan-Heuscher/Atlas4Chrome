@@ -57,11 +57,11 @@ function captureVisibleTabAsync(windowId = null, format = 'jpeg', quality = 60) 
 
 // OPTIMIZATION: Capture screenshot ONCE, use Chrome's native compression
 // If PNG is too large, try JPEG with different qualities (via Chrome API)
-async function captureThumbnail(windowId = null, maxBytes = 15000) {
+async function captureThumbnail(windowId = null, maxBytes = 50000) {
   try {
     // Step 1: Try JPEG with different qualities (Chrome can compress natively)
-    // Start with quality 50 to get smaller size, then try lower if needed
-    const qualities = [50, 35, 20, 10];
+    // Start aggressive: quality 20, 15, 10 to get smaller sizes quickly
+    const qualities = [20, 15, 10];
     for (const quality of qualities) {
       try {
         const dataUrl = await captureVisibleTabAsync(windowId, 'jpeg', quality);
@@ -89,7 +89,7 @@ async function captureThumbnail(windowId = null, maxBytes = 15000) {
         const base64 = png.split(',')[1] || '';
         console.log('Captured PNG - size:', base64.length, 'bytes');
         if (base64.length <= maxBytes * 2) {
-          // Even if over limit, PNG may be acceptable for first screenshot
+          // Even if over limit, PNG may be acceptable
           return png;
         }
       }
@@ -406,7 +406,7 @@ async function runAgentCycle(goal, options = {}) {
 
       // Capture a thumbnail sized JPEG to avoid large payloads.
       try {
-        screenshot = await captureThumbnail(activeTab.windowId, 15000);
+        screenshot = await captureThumbnail(activeTab.windowId, 50000);
         if (screenshot) {
           await storageSet({ lastCaptureAt: Date.now() });
         }
@@ -429,7 +429,7 @@ async function runAgentCycle(goal, options = {}) {
       }
       if (screenshot) {
         const base64 = screenshot.split(',')[1] || '';
-        if (base64.length > 20000) {
+        if (base64.length > 100000) {
           console.warn('Captured screenshot is still too large (', base64.length, 'bytes), omitting image from request.');
           screenshot = null;
         }
@@ -476,8 +476,10 @@ async function runAgentCycle(goal, options = {}) {
     // Ensure we have an active tab to send actions to. Reuse the previously found activeTab if possible.
     let tab = activeTab;
     if (!tab || !tab.id) {
-      const tabs = await new Promise((resolve) => chrome.tabs.query({ active: true, lastFocusedWindow: true }, resolve));
-      tab = tabs && tabs[0];
+      // Query for active tab in the last focused window, but exclude extension pages
+      const tabs = await new Promise((resolve) => chrome.tabs.query({ lastFocusedWindow: true }, resolve));
+      // Find first tab that's not an extension page (doesn't start with chrome-extension://)
+      tab = tabs && tabs.find(t => t.url && !t.url.startsWith('chrome-extension://'));
     }
     if (!tab || !tab.id) {
       console.warn('No active tab found to send action to. Aborting agent cycle.');
@@ -516,23 +518,22 @@ async function runAgentCycle(goal, options = {}) {
 
     // CRITICAL: Add function_response turn to conversation history per Computer Use protocol
     // This tells the model about the execution result so it can decide the next step
-    // For certain actions like open_web_browser, we need to include the current URL
+    // API requires URL in ALL function responses per Computer Use spec
     let responseData = {
       result: actionResult.success ? 'Action executed successfully' : (actionResult.error || 'Unknown error'),
       success: actionResult.success !== false
     };
 
-    // For open_web_browser, include the current page URL
-    if (geminiAction.action === 'open_web_browser') {
-      try {
-        const tabs = await new Promise((resolve) => chrome.tabs.query({ active: true, lastFocusedWindow: true }, resolve));
-        const currentTab = tabs && tabs[0];
-        if (currentTab && currentTab.url) {
-          responseData.url = currentTab.url;
-        }
-      } catch (err) {
-        console.warn('Failed to get current URL:', err);
+    // Include the current page URL for ALL actions (required by Computer Use API)
+    try {
+      // Get the current tab's URL
+      const tabs = await new Promise((resolve) => chrome.tabs.query({ lastFocusedWindow: true }, resolve));
+      const currentTab = tabs && tabs.find(t => t.url && !t.url.startsWith('chrome-extension://'));
+      if (currentTab && currentTab.url) {
+        responseData.url = currentTab.url;
       }
+    } catch (err) {
+      console.warn('Failed to get current URL:', err);
     }
 
     const functionResponsePart = {
