@@ -339,18 +339,46 @@ class GeminiClient {
 // ============================================================================
 
 const ActionExecutor = {
+  /**
+   * Map Gemini Computer Use action names to content script actions
+   */
+  normalizeAction(action) {
+    const normalized = { ...action };
+    
+    // Map navigate to open_web_browser
+    if (normalized.action === 'navigate' && normalized.args?.url) {
+      normalized.action = 'open_web_browser';
+    }
+    
+    // Map search to open_web_browser with Google search
+    if (normalized.action === 'search' && normalized.args?.query) {
+      normalized.action = 'open_web_browser';
+      normalized.args.url = `https://www.google.com/search?q=${encodeURIComponent(normalized.args.query)}`;
+    }
+    
+    // Ensure open_web_browser has a URL (default to google if missing)
+    if (normalized.action === 'open_web_browser' && !normalized.args?.url) {
+      normalized.args.url = 'https://www.google.com';
+    }
+    
+    return normalized;
+  },
+
   async execute(tab, action) {
     try {
+      // Normalize action names from Gemini
+      const normalizedAction = this.normalizeAction(action);
+      
       // Inject content script
       await TabAPI.injectContentScript(tab.id);
 
       // Send action to content script
       const response = await TabAPI.sendMessage(tab.id, {
         type: 'EXEC_ACTION',
-        action
+        action: normalizedAction
       });
 
-      Logger.debug(`Action ${action.action} response:`, response);
+      Logger.debug(`Action ${normalizedAction.action} response:`, response);
       return response;
     } catch (err) {
       Logger.error(`Action execution failed: ${err.message}`);
