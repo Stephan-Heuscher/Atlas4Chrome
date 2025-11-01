@@ -241,10 +241,14 @@ class GeminiClient {
     return key;
   }
 
-  buildUserPart(goal, screenshotDataUrl) {
+  buildUserPart(goal, screenshotDataUrl, viewportDimensions = null) {
+    const dimensionText = viewportDimensions 
+      ? `\n\nViewport size: ${viewportDimensions.width}x${viewportDimensions.height} pixels. Use these exact pixel coordinates in the screenshot.`
+      : '';
+    
     const text = `Goal: ${goal}
 
-The screenshot below shows the current browser viewport. Click coordinates should be relative to the top-left of the visible page (0,0 is top-left corner).
+The screenshot below shows the current browser viewport. Click coordinates should be relative to the top-left of the visible page (0,0 is top-left corner).${dimensionText}
 
 Respond with ONLY Computer Use tool calls. No other text.`;
     const base64 = screenshotDataUrl?.split(',')[1] || null;
@@ -297,10 +301,10 @@ Respond with ONLY Computer Use tool calls. No other text.`;
     return { type: 'none' };
   }
 
-  async call(screenshotDataUrl, goal, conversationHistory = []) {
+  async call(screenshotDataUrl, goal, conversationHistory = [], viewportDimensions = null) {
     try {
       const apiKey = await this.getApiKey();
-      const userPart = this.buildUserPart(goal, screenshotDataUrl);
+      const userPart = this.buildUserPart(goal, screenshotDataUrl, viewportDimensions);
       
       // Build contents: existing history + new user message
       const contents = [...conversationHistory, userPart];
@@ -523,6 +527,30 @@ class Agent {
     });
   }
 
+  async getViewportDimensions(tab) {
+    try {
+      const result = await new Promise((resolve) => {
+        chrome.tabs.executeScript(tab.id, { code: `(${() => {
+          return {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            devicePixelRatio: window.devicePixelRatio
+          };
+        }}).call({})` }, (results) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+          } else {
+            resolve(results?.[0] || null);
+          }
+        });
+      });
+      return result;
+    } catch (err) {
+      Logger.debug(`Could not get viewport dimensions: ${err.message}`);
+      return null;
+    }
+  }
+
   async shouldContinue() {
     const shouldRun = await StorageAPI.local.get(STORAGE.LOCAL.AGENT_SHOULD_RUN);
     return shouldRun !== false;
@@ -632,9 +660,13 @@ class Agent {
 
       // Capture screenshot
       const screenshot = await this.captureScreenshot(tab);
+      
+      // Get viewport dimensions for coordinate accuracy
+      const viewportDimensions = await this.getViewportDimensions(tab);
+      Logger.debug(`Viewport dimensions: ${viewportDimensions?.width}x${viewportDimensions?.height}`);
 
-      // Call Gemini
-      const geminiAction = await this.gemini.call(screenshot, this.goal, this.conversationHistory);
+      // Call Gemini with viewport info
+      const geminiAction = await this.gemini.call(screenshot, this.goal, this.conversationHistory, viewportDimensions);
       if (geminiAction.conversationHistory) {
         this.conversationHistory = geminiAction.conversationHistory;
       }
