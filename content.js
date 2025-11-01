@@ -71,22 +71,31 @@ async function clickElement(selector) {
 // Coordinates are raw pixel values from the screenshot
 async function clickAt(xPx, yPx) {
   try {
-    // Clamp coordinates to viewport
-    const x = Math.round(Math.max(0, Math.min(xPx, window.innerWidth - 1)));
-    const y = Math.round(Math.max(0, Math.min(yPx, window.innerHeight - 1)));
+    // Apply device pixel ratio scaling to convert from CSS pixels to device pixels
+    const dpr = window.devicePixelRatio || 1;
+    const scaledX = Math.round(xPx * dpr);
+    const scaledY = Math.round(yPx * dpr);
     
-    const logMsg = `🎯 CLICK AT (${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`;
+    // Clamp to viewport device pixels
+    const x = Math.max(0, Math.min(scaledX, window.innerWidth * dpr - 1));
+    const y = Math.max(0, Math.min(scaledY, window.innerHeight * dpr - 1));
+    
+    // Convert back to CSS pixels for DOM operations
+    const cssX = x / dpr;
+    const cssY = y / dpr;
+    
+    const logMsg = `🎯 CLICK AT (${xPx}, ${yPx}) → scaled (${x}, ${y}) → CSS (${cssX}, ${cssY}) in viewport ${window.innerWidth}x${window.innerHeight} (DPR: ${dpr})`;
     console.log('%c' + logMsg, 'color: red; font-weight: bold; font-size: 14px;');
     
     // ALSO log to window for debugging
-    window.__lastClickCoords = {x, y, viewport: `${window.innerWidth}x${window.innerHeight}`, timestamp: new Date().toLocaleTimeString()};
+    window.__lastClickCoords = {originalX: xPx, originalY: yPx, scaledX: x, scaledY: y, cssX, cssY, viewport: `${window.innerWidth}x${window.innerHeight}`, dpr, timestamp: new Date().toLocaleTimeString()};
     console.table(window.__lastClickCoords);
     
-    // Show visual marker
-    showClickMarker(x, y, 'red', 'C');
+    // Show visual marker at CSS coordinates
+    showClickMarker(cssX, cssY, 'red', 'C');
     
-    // Get element at viewport coordinates
-    const el = document.elementFromPoint(x, y);
+    // Get element at viewport coordinates (use CSS pixels)
+    const el = document.elementFromPoint(cssX, cssY);
     console.log('Element found:', el?.tagName, el?.id, el?.className);
     
     if (el && el !== document.body && el !== document.documentElement) {
@@ -96,13 +105,13 @@ async function clickAt(xPx, yPx) {
       // Wait a tiny bit for scroll
       await new Promise(r => setTimeout(r, 100));
       
-      // Re-get element after scroll (coordinates changed)
-      const elAfterScroll = document.elementFromPoint(x, y);
+      // Re-get element after scroll (use CSS pixels)
+      const elAfterScroll = document.elementFromPoint(cssX, cssY);
       
-      // Dispatch all necessary events
-      elAfterScroll?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y, buttons: 1 }));
-      elAfterScroll?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
-      elAfterScroll?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      // Dispatch all necessary events (use CSS pixels for clientX/clientY)
+      elAfterScroll?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: cssX, clientY: cssY, buttons: 1 }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: cssX, clientY: cssY }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cssX, clientY: cssY }));
       
       // Also try native click if available
       if (elAfterScroll?.click) {
@@ -118,10 +127,10 @@ async function clickAt(xPx, yPx) {
         bubbles: true,
         cancelable: true,
         view: window,
-        clientX: x,
-        clientY: y
+        clientX: cssX,
+        clientY: cssY
       });
-      document.elementFromPoint(x, y)?.dispatchEvent(clickEvent);
+      document.elementFromPoint(cssX, cssY)?.dispatchEvent(clickEvent);
       return { success: true };
     }
   } catch (err) {
@@ -133,15 +142,25 @@ async function clickAt(xPx, yPx) {
 // Type text at pixel coordinates (from Gemini Computer Use API)
 async function typeTextAt(xPx, yPx, text, press_enter = true) {
   try {
-    const x = Math.round(xPx);
-    const y = Math.round(yPx);
+    // Apply device pixel ratio scaling
+    const dpr = window.devicePixelRatio || 1;
+    const scaledX = Math.round(xPx * dpr);
+    const scaledY = Math.round(yPx * dpr);
     
-    console.log(`%c✏️ TYPE TEXT AT (${x}, ${y}): "${text}"`, 'color: blue; font-weight: bold; font-size: 12px;');
+    // Clamp to viewport device pixels
+    const x = Math.max(0, Math.min(scaledX, window.innerWidth * dpr - 1));
+    const y = Math.max(0, Math.min(scaledY, window.innerHeight * dpr - 1));
+    
+    // Convert back to CSS pixels for DOM operations
+    const cssX = x / dpr;
+    const cssY = y / dpr;
+    
+    console.log(`%c✏️ TYPE TEXT AT (${xPx}, ${yPx}) → scaled (${x}, ${y}) → CSS (${cssX}, ${cssY}): "${text}"`, 'color: blue; font-weight: bold; font-size: 12px;');
     
     // Show visual marker
-    showClickMarker(x, y, 'blue', 'T');
+    showClickMarker(cssX, cssY, 'blue', 'T');
     
-    const el = document.elementFromPoint(x, y);
+    const el = document.elementFromPoint(cssX, cssY);
     console.log('Target element:', el?.tagName, el?.id, el?.className);
     
     if (el) {
