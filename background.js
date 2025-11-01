@@ -448,6 +448,20 @@ const ActionExecutor = {
       }
 
       // For other actions, send to content script
+      // Log coordinates for click and type actions
+      if (normalizedAction.action === 'click_at') {
+        const x = normalizedAction.args?.x || normalizedAction.x || 0;
+        const y = normalizedAction.args?.y || normalizedAction.y || 0;
+        Logger.info(`[Agent] Function call: click_at (${x}, ${y})`);
+      } else if (normalizedAction.action === 'type_text_at') {
+        const x = normalizedAction.args?.x || normalizedAction.x || 0;
+        const y = normalizedAction.args?.y || normalizedAction.y || 0;
+        const text = normalizedAction.args?.text || normalizedAction.text || '';
+        Logger.info(`[Agent] Function call: type_text_at (${x}, ${y}): "${text}"`);
+      } else {
+        Logger.info(`[Agent] Function call: ${normalizedAction.action}`);
+      }
+      
       Logger.debug(`Sending action to tab ${tab.id}: ${normalizedAction.action}`);
       const response = await TabAPI.sendMessage(tab.id, {
         type: 'EXEC_ACTION',
