@@ -170,10 +170,11 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         if (press_enter) {
-          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
         }
-        console.log('✓ Text typed into input element');
+        console.log('✓ Text typed into input element, press_enter:', press_enter);
         return { success: true };
       }
       if (el.isContentEditable) {
@@ -188,8 +189,13 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
     if (ae && 'value' in ae) {
       ae.value = text;
       ae.dispatchEvent(new Event('input', { bubbles: true }));
-      if (press_enter) ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      console.log('✓ Text typed into activeElement');
+      ae.dispatchEvent(new Event('change', { bubbles: true }));
+      if (press_enter) {
+        ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+        ae.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
+        ae.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+      }
+      console.log('✓ Text typed into activeElement, press_enter:', press_enter);
       return { success: true };
     }
     console.log(`❌ No editable element found at (${cssX}, ${cssY})`);
