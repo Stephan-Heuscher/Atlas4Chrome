@@ -564,14 +564,18 @@ class Agent {
       // Get active tab on step 1
       if (this.step === 1) {
         if (this.startTabId) {
-          // Use specified tab
-          const tabs = await new Promise((resolve) => 
-            chrome.tabs.queryAll ? chrome.tabs.query({}, resolve) : resolve([])
-          );
+          // Use specified tab - query all tabs to find it
+          Logger.debug(`Looking for start tab ${this.startTabId}`);
+          const tabs = await new Promise((resolve) => {
+            chrome.tabs.query({}, resolve);
+          });
+          Logger.debug(`Found ${tabs.length} total tabs: ${tabs.map(t => t.id).join(', ')}`);
           activeTab = tabs.find(t => t.id === this.startTabId);
           if (!activeTab) {
-            Logger.warn(`Start tab ${this.startTabId} not found`);
+            Logger.warn(`Start tab ${this.startTabId} not found, falling back to focused tab`);
             activeTab = await TabAPI.getNormalTab();
+          } else {
+            Logger.info(`✓ Found start tab ${this.startTabId}: ${activeTab.url}`);
           }
         } else {
           // Get current focused tab
