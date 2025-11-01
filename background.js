@@ -529,22 +529,35 @@ class Agent {
 
   async getViewportDimensions(tab) {
     try {
-      const result = await new Promise((resolve) => {
-        chrome.tabs.executeScript(tab.id, { code: `(${() => {
-          return {
-            width: window.innerWidth,
-            height: window.innerHeight,
-            devicePixelRatio: window.devicePixelRatio
-          };
-        }}).call({})` }, (results) => {
-          if (chrome.runtime.lastError) {
-            resolve(null);
-          } else {
-            resolve(results?.[0] || null);
-          }
+      // Use sendMessage to get viewport dimensions via content script
+      const response = await new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 1000);
+        
+        // First inject content script
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        }).then(() => {
+          // Send message to get viewport
+          chrome.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' }, (response) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+              resolve(null);
+            } else {
+              resolve(response);
+            }
+          });
+        }).catch(() => {
+          clearTimeout(timeout);
+          resolve(null);
         });
       });
-      return result;
+      
+      if (response?.width && response?.height) {
+        Logger.info(`Got viewport: ${response.width}x${response.height}`);
+        return response;
+      }
+      return null;
     } catch (err) {
       Logger.debug(`Could not get viewport dimensions: ${err.message}`);
       return null;

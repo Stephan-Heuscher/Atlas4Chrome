@@ -317,6 +317,18 @@ async function handleAction(action) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('%c📨 MESSAGE RECEIVED', 'color: blue; font-weight: bold;', message);
   
+  // Handle viewport request
+  if (message.type === 'GET_VIEWPORT') {
+    const viewport = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio
+    };
+    console.log('%c📐 VIEWPORT INFO', 'color: cyan; font-weight: bold;', viewport);
+    sendResponse(viewport);
+    return;
+  }
+  
   if (!message || message.type !== 'EXEC_ACTION') {
     console.log('❌ Ignoring non-EXEC_ACTION message');
     return;
