@@ -192,7 +192,7 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
       console.log('✓ Text typed into activeElement');
       return { success: true };
     }
-    console.log('❌ No editable element found at (${x}, ${y})');
+    console.log(`❌ No editable element found at (${cssX}, ${cssY})`);
     return { success: false, error: 'no-editable-element-at-coordinates' };
   } catch (err) {
     console.error('typeTextAt error:', err);
