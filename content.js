@@ -371,6 +371,25 @@ async function handleAction(action) {
   }
 }
 
+// Function to mark two points and log their positions
+function markTwoPoints(point1, point2) {
+  try {
+    // Mark the first point
+    showClickMarker(point1.x, point1.y, 'green', 'P1');
+    console.log(`Point 1: (${point1.x}, ${point1.y})`);
+
+    // Mark the second point
+    showClickMarker(point2.x, point2.y, 'blue', 'P2');
+    console.log(`Point 2: (${point2.x}, ${point2.y})`);
+
+    // Return the positions for further use
+    return { point1, point2 };
+  } catch (err) {
+    console.error('❌ Failed to mark points:', err);
+    return null;
+  }
+}
+
 // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('%c📨 MESSAGE RECEIVED', 'color: blue; font-weight: bold;', message);
@@ -389,6 +408,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('%c📐 VIEWPORT INFO', 'color: cyan; font-weight: bold;', viewport);
     sendResponse(viewport);
     return;
+  }
+  
+  // Modify the EXEC_ACTION handler to include positions in the Gemini request
+  if (message.type === 'EXEC_ACTION') {
+    const action = message.action;
+    console.log('%c🎬 EXECUTING ACTION', 'color: orange; font-weight: bold;', action);
+
+    // Example points to mark (replace with actual logic to determine points)
+    const point1 = { x: 100, y: 150 };
+    const point2 = { x: 300, y: 400 };
+
+    // Mark the points and log their positions
+    const markedPoints = markTwoPoints(point1, point2);
+
+    handleAction(action)
+      .then((result) => {
+        console.log('%c✅ ACTION RESULT', 'color: green;', result);
+
+        // Include the marked points in the response to Gemini
+        const response = { ...result, markedPoints };
+        sendResponse(response);
+      })
+      .catch((err) => {
+        console.log('%c❌ ACTION ERROR', 'color: red;', err);
+        sendResponse({ success: false, error: err.message });
+      });
+
+    // Indicate we'll send a response asynchronously
+    return true;
   }
   
   if (!message || message.type !== 'EXEC_ACTION') {
