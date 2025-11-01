@@ -243,7 +243,7 @@ class GeminiClient {
 
   buildUserPart(goal, screenshotDataUrl, viewportDimensions = null) {
     const dimensionText = viewportDimensions 
-      ? `\n\nViewport size: ${viewportDimensions.width}x${viewportDimensions.height} pixels. Use these exact pixel coordinates in the screenshot.`
+      ? `\n\nViewport: ${viewportDimensions.width}x${viewportDimensions.height} pixels (DPR: ${viewportDimensions.devicePixelRatio || 1}). The screenshot image shows this exact viewport. Click coordinates must match the screenshot pixel coordinates (0,0 = top-left of the visible page).`
       : '';
     
     const text = `Goal: ${goal}
@@ -676,7 +676,9 @@ class Agent {
       
       // Get viewport dimensions for coordinate accuracy
       const viewportDimensions = await this.getViewportDimensions(tab);
-      Logger.debug(`Viewport dimensions: ${viewportDimensions?.width}x${viewportDimensions?.height}`);
+      if (viewportDimensions) {
+        Logger.info(`📐 Viewport: ${viewportDimensions.width}x${viewportDimensions.height} (DPR: ${viewportDimensions.devicePixelRatio})`);
+      }
 
       // Call Gemini with viewport info
       const geminiAction = await this.gemini.call(screenshot, this.goal, this.conversationHistory, viewportDimensions);
