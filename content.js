@@ -75,7 +75,12 @@ async function clickAt(xPx, yPx) {
     const x = Math.round(Math.max(0, Math.min(xPx, window.innerWidth - 1)));
     const y = Math.round(Math.max(0, Math.min(yPx, window.innerHeight - 1)));
     
-    console.log(`%c🎯 CLICK AT (${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`, 'color: red; font-weight: bold; font-size: 12px;');
+    const logMsg = `🎯 CLICK AT (${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`;
+    console.log('%c' + logMsg, 'color: red; font-weight: bold; font-size: 14px;');
+    
+    // ALSO log to window for debugging
+    window.__lastClickCoords = {x, y, viewport: `${window.innerWidth}x${window.innerHeight}`, timestamp: new Date().toLocaleTimeString()};
+    console.table(window.__lastClickCoords);
     
     // Show visual marker
     showClickMarker(x, y, 'red', 'C');
@@ -221,10 +226,15 @@ async function scrollPage(direction) {
 
 async function handleAction(action) {
   if (!action || !action.action) return { success: false, error: 'invalid-action' };
+  
+  // Log the action type
+  console.log(`%c[HANDLER] Action type: ${action.action}, X: ${action.args?.x || action.x || 0}, Y: ${action.args?.y || action.y || 0}`, 'color: purple; font-weight: bold;');
+  
   switch (action.action) {
     case 'click':
       return await clickElement(action.selector);
     case 'click_at':
+      console.log('%c[CLICK_AT] Calling clickAt with coords', 'color: red;', action.args?.x || action.x || 0, action.args?.y || action.y || 0);
       return await clickAt(action.args?.x || action.x || 0, action.args?.y || action.y || 0);
     case 'type_text_at':
     case 'type_at':
