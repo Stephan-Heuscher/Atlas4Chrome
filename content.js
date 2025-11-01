@@ -68,34 +68,33 @@ async function clickElement(selector) {
 }
 
 // Click at pixel coordinates (from Gemini Computer Use API)
-// Coordinates are raw pixel values from the screenshot
+// Coordinates are now in DEVICE pixels (physical pixels of the screenshot)
 async function clickAt(xPx, yPx) {
   try {
-    // Apply device pixel ratio scaling to convert from CSS pixels to device pixels
+    // Coordinates from Gemini are in device pixel space
+    // We need to convert them to CSS pixel space for DOM operations
     const dpr = window.devicePixelRatio || 1;
-    const scaledX = Math.round(xPx * dpr);
-    const scaledY = Math.round(yPx * dpr);
     
-    // Clamp to viewport device pixels
-    const x = Math.max(0, Math.min(scaledX, window.innerWidth * dpr - 1));
-    const y = Math.max(0, Math.min(scaledY, window.innerHeight * dpr - 1));
+    // Convert device pixels to CSS pixels
+    const cssX = xPx / dpr;
+    const cssY = yPx / dpr;
     
-    // Convert back to CSS pixels for DOM operations
-    const cssX = x / dpr;
-    const cssY = y / dpr;
+    // Clamp to CSS pixel viewport
+    const clampedX = Math.max(0, Math.min(cssX, window.innerWidth - 1));
+    const clampedY = Math.max(0, Math.min(cssY, window.innerHeight - 1));
     
-    const logMsg = `🎯 CLICK AT (${xPx}, ${yPx}) → scaled (${x}, ${y}) → CSS (${cssX}, ${cssY}) in viewport ${window.innerWidth}x${window.innerHeight} (DPR: ${dpr})`;
+    const logMsg = `🎯 CLICK AT device (${xPx}, ${yPx}) → CSS (${clampedX}, ${clampedY}) in viewport ${window.innerWidth}x${window.innerHeight} (DPR: ${dpr})`;
     console.log('%c' + logMsg, 'color: red; font-weight: bold; font-size: 14px;');
     
     // ALSO log to window for debugging
-    window.__lastClickCoords = {originalX: xPx, originalY: yPx, scaledX: x, scaledY: y, cssX, cssY, viewport: `${window.innerWidth}x${window.innerHeight}`, dpr, timestamp: new Date().toLocaleTimeString()};
+    window.__lastClickCoords = {deviceX: xPx, deviceY: yPx, cssX: clampedX, cssY: clampedY, viewport: `${window.innerWidth}x${window.innerHeight}`, dpr, timestamp: new Date().toLocaleTimeString()};
     console.table(window.__lastClickCoords);
     
     // Show visual marker at CSS coordinates
-    showClickMarker(cssX, cssY, 'red', 'C');
+    showClickMarker(clampedX, clampedY, 'red', 'C');
     
     // Get element at viewport coordinates (use CSS pixels)
-    const el = document.elementFromPoint(cssX, cssY);
+    const el = document.elementFromPoint(clampedX, clampedY);
     console.log('Element found:', el?.tagName, el?.id, el?.className);
     
     if (el && el !== document.body && el !== document.documentElement) {
@@ -106,12 +105,12 @@ async function clickAt(xPx, yPx) {
       await new Promise(r => setTimeout(r, 100));
       
       // Re-get element after scroll (use CSS pixels)
-      const elAfterScroll = document.elementFromPoint(cssX, cssY);
+      const elAfterScroll = document.elementFromPoint(clampedX, clampedY);
       
       // Dispatch all necessary events (use CSS pixels for clientX/clientY)
-      elAfterScroll?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: cssX, clientY: cssY, buttons: 1 }));
-      elAfterScroll?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: cssX, clientY: cssY }));
-      elAfterScroll?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cssX, clientY: cssY }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: clampedX, clientY: clampedY, buttons: 1 }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: clampedX, clientY: clampedY }));
+      elAfterScroll?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: clampedX, clientY: clampedY }));
       
       // Also try native click if available
       if (elAfterScroll?.click) {
@@ -127,10 +126,10 @@ async function clickAt(xPx, yPx) {
         bubbles: true,
         cancelable: true,
         view: window,
-        clientX: cssX,
-        clientY: cssY
+        clientX: clampedX,
+        clientY: clampedY
       });
-      document.elementFromPoint(cssX, cssY)?.dispatchEvent(clickEvent);
+      document.elementFromPoint(clampedX, clampedY)?.dispatchEvent(clickEvent);
       return { success: true };
     }
   } catch (err) {
@@ -140,27 +139,27 @@ async function clickAt(xPx, yPx) {
 }
 
 // Type text at pixel coordinates (from Gemini Computer Use API)
+// Coordinates are now in DEVICE pixels (physical pixels of the screenshot)
 async function typeTextAt(xPx, yPx, text, press_enter = true) {
   try {
-    // Apply device pixel ratio scaling
+    // Coordinates from Gemini are in device pixel space
+    // We need to convert them to CSS pixel space for DOM operations
     const dpr = window.devicePixelRatio || 1;
-    const scaledX = Math.round(xPx * dpr);
-    const scaledY = Math.round(yPx * dpr);
     
-    // Clamp to viewport device pixels
-    const x = Math.max(0, Math.min(scaledX, window.innerWidth * dpr - 1));
-    const y = Math.max(0, Math.min(scaledY, window.innerHeight * dpr - 1));
+    // Convert device pixels to CSS pixels
+    const cssX = xPx / dpr;
+    const cssY = yPx / dpr;
     
-    // Convert back to CSS pixels for DOM operations
-    const cssX = x / dpr;
-    const cssY = y / dpr;
+    // Clamp to CSS pixel viewport
+    const clampedX = Math.max(0, Math.min(cssX, window.innerWidth - 1));
+    const clampedY = Math.max(0, Math.min(cssY, window.innerHeight - 1));
     
-    console.log(`%c✏️ TYPE TEXT AT (${xPx}, ${yPx}) → scaled (${x}, ${y}) → CSS (${cssX}, ${cssY}): "${text}"`, 'color: blue; font-weight: bold; font-size: 12px;');
+    console.log(`%c✏️ TYPE TEXT AT device (${xPx}, ${yPx}) → CSS (${clampedX}, ${clampedY}): "${text}"`, 'color: blue; font-weight: bold; font-size: 12px;');
     
     // Show visual marker
-    showClickMarker(cssX, cssY, 'blue', 'T');
+    showClickMarker(clampedX, clampedY, 'blue', 'T');
     
-    const el = document.elementFromPoint(cssX, cssY);
+    const el = document.elementFromPoint(clampedX, clampedY);
     console.log('Target element details:', {
       tagName: el?.tagName,
       id: el?.id,
@@ -232,7 +231,7 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
       console.log('✓ Text typed into activeElement, press_enter:', press_enter);
       return { success: true };
     }
-    console.log(`❌ No editable element found at (${cssX}, ${cssY})`);
+    console.log(`❌ No editable element found at CSS (${clampedX}, ${clampedY})`);
     return { success: false, error: 'no-editable-element-at-coordinates' };
   } catch (err) {
     console.error('typeTextAt error:', err);

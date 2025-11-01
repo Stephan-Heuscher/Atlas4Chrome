@@ -242,8 +242,13 @@ class GeminiClient {
   }
 
   buildUserPart(goal, screenshotDataUrl, viewportDimensions = null) {
-    const dimensionText = viewportDimensions 
-      ? `\n\nViewport: ${viewportDimensions.width}x${viewportDimensions.height} CSS pixels (DPR: ${viewportDimensions.devicePixelRatio || 1}). The screenshot shows ONLY the web page content area, NOT the browser chrome (address bar/tabs). Click coordinates must be relative to the top-left of the visible web page content (0,0 = first pixel of page content).`
+    // Calculate actual screenshot pixel dimensions based on DPR
+    const dpr = viewportDimensions?.devicePixelRatio || 1;
+    const actualWidth = viewportDimensions ? Math.round(viewportDimensions.width * dpr) : null;
+    const actualHeight = viewportDimensions ? Math.round(viewportDimensions.height * dpr) : null;
+    
+    const dimensionText = viewportDimensions && actualWidth && actualHeight
+      ? `\n\nScreenshot dimensions: ${actualWidth}x${actualHeight} physical pixels (${viewportDimensions.width}x${viewportDimensions.height} CSS pixels at ${dpr}x device pixel ratio). Provide click coordinates in physical pixel space (matching the screenshot).`
       : '';
     
     const text = `Goal: ${goal}
