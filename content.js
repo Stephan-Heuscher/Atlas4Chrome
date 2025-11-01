@@ -75,14 +75,14 @@ async function clickAt(xPx, yPx) {
     const x = Math.round(Math.max(0, Math.min(xPx, window.innerWidth - 1)));
     const y = Math.round(Math.max(0, Math.min(yPx, window.innerHeight - 1)));
     
-    console.log(`clickAt(${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`);
+    console.log(`%c🎯 CLICK AT (${x}, ${y}) in viewport ${window.innerWidth}x${window.innerHeight}`, 'color: red; font-weight: bold; font-size: 12px;');
     
     // Show visual marker
     showClickMarker(x, y, 'red', 'C');
     
     // Get element at viewport coordinates
     const el = document.elementFromPoint(x, y);
-    console.log('Element at point:', el?.tagName, el?.className, el?.id);
+    console.log('Element found:', el?.tagName, el?.id, el?.className);
     
     if (el && el !== document.body && el !== document.documentElement) {
       // Scroll element into view
@@ -104,7 +104,7 @@ async function clickAt(xPx, yPx) {
         elAfterScroll.click();
       }
       
-      console.log('Clicked element:', elAfterScroll?.tagName, elAfterScroll?.id, elAfterScroll?.className);
+      console.log('✓ Clicked:', elAfterScroll?.tagName, elAfterScroll?.id, elAfterScroll?.className);
       return { success: true };
     } else {
       console.log('No valid element found, trying generic click');
@@ -131,13 +131,13 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
     const x = Math.round(xPx);
     const y = Math.round(yPx);
     
-    console.log(`typeTextAt(${x}, ${y}, "${text}")`);
+    console.log(`%c✏️ TYPE TEXT AT (${x}, ${y}): "${text}"`, 'color: blue; font-weight: bold; font-size: 12px;');
     
     // Show visual marker
     showClickMarker(x, y, 'blue', 'T');
     
     const el = document.elementFromPoint(x, y);
-    console.log('Element at point:', el?.tagName, el?.className);
+    console.log('Target element:', el?.tagName, el?.id, el?.className);
     
     if (el) {
       el.focus();
@@ -149,13 +149,13 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
           el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
           el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
         }
-        console.log('Text typed into input element');
+        console.log('✓ Text typed into input element');
         return { success: true };
       }
       if (el.isContentEditable) {
         el.innerText = text;
         el.dispatchEvent(new Event('input', { bubbles: true }));
-        console.log('Text typed into contentEditable');
+        console.log('✓ Text typed into contentEditable');
         return { success: true };
       }
     }
@@ -165,10 +165,10 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
       ae.value = text;
       ae.dispatchEvent(new Event('input', { bubbles: true }));
       if (press_enter) ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      console.log('Text typed into activeElement');
+      console.log('✓ Text typed into activeElement');
       return { success: true };
     }
-    console.log('No editable element found');
+    console.log('❌ No editable element found at (${x}, ${y})');
     return { success: false, error: 'no-editable-element-at-coordinates' };
   } catch (err) {
     console.error('typeTextAt error:', err);
