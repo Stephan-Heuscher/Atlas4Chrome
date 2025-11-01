@@ -242,14 +242,18 @@ class GeminiClient {
   }
 
   buildUserPart(goal, screenshotDataUrl) {
-    const text = `Goal: ${goal}\n\nRespond with ONLY Computer Use tool calls. No other text.`;
+    const text = `Goal: ${goal}
+
+The screenshot below shows the current browser viewport. Click coordinates should be relative to the top-left of the visible page (0,0 is top-left corner).
+
+Respond with ONLY Computer Use tool calls. No other text.`;
     const base64 = screenshotDataUrl?.split(',')[1] || null;
     
     return {
       role: 'user',
       parts: [
         { text },
-        ...(base64 ? [{ inline_data: { mime_type: 'image/png', data: base64 } }] : []),
+        ...(base64 ? [{ inline_data: { mime_type: 'image/jpeg', data: base64 } }] : []),
       ]
     };
   }
@@ -529,6 +533,9 @@ class Agent {
           Logger.warn(`Screenshot too large (${size} bytes), omitting`);
           return null;
         }
+        
+        // Get tab dimensions for coordinate mapping
+        Logger.debug(`Tab ${tab.id} dimensions: ${tab.width}x${tab.height} or unknown`);
       }
       return screenshot;
     } catch (err) {
