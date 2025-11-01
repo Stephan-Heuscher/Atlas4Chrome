@@ -161,18 +161,40 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
     showClickMarker(cssX, cssY, 'blue', 'T');
     
     const el = document.elementFromPoint(cssX, cssY);
-    console.log('Target element:', el?.tagName, el?.id, el?.className);
+    console.log('Target element details:', {
+      tagName: el?.tagName,
+      id: el?.id,
+      className: el?.className,
+      hasValue: 'value' in el,
+      contentEditable: el?.contentEditable,
+      type: el?.type,
+      name: el?.name,
+      value: el?.value
+    });
     
     if (el) {
       el.focus();
       if ('value' in el) {
+        console.log('Setting value property to:', text);
         el.value = text;
+        
+        // Trigger comprehensive input events
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        
+        // Type each character with keyboard events for better compatibility
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent('keypress', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+        }
+        
         if (press_enter) {
-          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
         console.log('✓ Text typed into input element, press_enter:', press_enter);
         return { success: true };
@@ -186,14 +208,26 @@ async function typeTextAt(xPx, yPx, text, press_enter = true) {
     }
     // fallback: type into activeElement
     const ae = document.activeElement;
+    console.log('Active element:', ae?.tagName, 'value' in ae, ae?.value);
     if (ae && 'value' in ae) {
+      console.log('Setting activeElement value to:', text);
       ae.value = text;
       ae.dispatchEvent(new Event('input', { bubbles: true }));
       ae.dispatchEvent(new Event('change', { bubbles: true }));
+      ae.dispatchEvent(new Event('blur', { bubbles: true }));
+      
+      // Type each character
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        ae.dispatchEvent(new KeyboardEvent('keydown', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+        ae.dispatchEvent(new KeyboardEvent('keypress', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+        ae.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: `Key${char.toUpperCase()}`, bubbles: true, cancelable: true }));
+      }
+      
       if (press_enter) {
-        ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-        ae.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
-        ae.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+        ae.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+        ae.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+        ae.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
       }
       console.log('✓ Text typed into activeElement, press_enter:', press_enter);
       return { success: true };
