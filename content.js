@@ -381,7 +381,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const viewport = {
       width: window.innerWidth,
       height: window.innerHeight,
-      devicePixelRatio: window.devicePixelRatio
+      devicePixelRatio: window.devicePixelRatio,
+      scrollY: window.scrollY,
+      scrollX: window.scrollX,
+      documentHeight: document.documentElement.scrollHeight,
+      documentWidth: document.documentElement.scrollWidth
     };
     console.log('%c📐 VIEWPORT INFO', 'color: cyan; font-weight: bold;', viewport);
     sendResponse(viewport);

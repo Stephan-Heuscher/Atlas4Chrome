@@ -243,7 +243,7 @@ class GeminiClient {
 
   buildUserPart(goal, screenshotDataUrl, viewportDimensions = null) {
     const dimensionText = viewportDimensions 
-      ? `\n\nViewport: ${viewportDimensions.width}x${viewportDimensions.height} pixels (DPR: ${viewportDimensions.devicePixelRatio || 1}). The screenshot image shows this exact viewport. Click coordinates must match the screenshot pixel coordinates (0,0 = top-left of the visible page).`
+      ? `\n\nViewport: ${viewportDimensions.width}x${viewportDimensions.height} CSS pixels (DPR: ${viewportDimensions.devicePixelRatio || 1}). The screenshot shows ONLY the web page content area, NOT the browser chrome (address bar/tabs). Click coordinates must be relative to the top-left of the visible web page content (0,0 = first pixel of page content).`
       : '';
     
     const text = `Goal: ${goal}
@@ -529,7 +529,7 @@ class Agent {
 
   async getViewportDimensions(tab) {
     try {
-      // Use sendMessage to get viewport dimensions via content script
+      // Use sendMessage to get viewport dimensions AND page offset via content script
       const response = await new Promise((resolve) => {
         const timeout = setTimeout(() => resolve(null), 1000);
         
@@ -538,7 +538,7 @@ class Agent {
           target: { tabId: tab.id },
           files: ['content.js']
         }).then(() => {
-          // Send message to get viewport
+          // Send message to get viewport and offset
           chrome.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' }, (response) => {
             clearTimeout(timeout);
             if (chrome.runtime.lastError) {
@@ -554,7 +554,7 @@ class Agent {
       });
       
       if (response?.width && response?.height) {
-        Logger.info(`Got viewport: ${response.width}x${response.height}`);
+        Logger.info(`Got viewport: ${response.width}x${response.height}, scrollY: ${response.scrollY || 0}`);
         return response;
       }
       return null;
